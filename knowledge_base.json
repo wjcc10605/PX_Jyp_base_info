@@ -1,0 +1,663 @@
+{
+  "name": "金羊皮项目知识库",
+  "version": "1.2",
+  "description": "基于金羊皮代码.txt文件整理的业务知识库",
+  "business_domains": [
+    {
+      "name": "订单转化",
+      "description": "分析从商品浏览到订单完单的转化过程",
+      "core_concepts": [
+        "商品列表曝光",
+        "商详页浏览",
+        "高意向点击",
+        "下单",
+        "付款",
+        "完单"
+      ]
+    },
+    {
+      "name": "金融业务",
+      "description": "分析分月付、首付单等金融相关业务",
+      "core_concepts": [
+        "分月付",
+        "首付单",
+        "金融订单",
+        "贷款计划",
+        "还款结清"
+      ]
+    },
+    {
+      "name": "用户行为",
+      "description": "分析用户在平台上的行为轨迹",
+      "core_concepts": [
+        "用户浏览",
+        "商品点击",
+        "咨询",
+        "还价",
+        "立即购买",
+        "号月付方案点击"
+      ]
+    },
+    {
+      "name": "设备分析",
+      "description": "分析用户使用的设备类型和系统",
+      "core_concepts": [
+        "PC端",
+        "H5端",
+        "Android端",
+        "iOS端"
+      ]
+    },
+    {
+      "name": "商品分析",
+      "description": "分析商品的在架情况和属性",
+      "core_concepts": [
+        "在架商品",
+        "分月付商品",
+        "商品属性",
+        "价格区间",
+        "账号类别",
+        "实名类别"
+      ]
+    },
+    {
+      "name": "流量分析",
+      "description": "分析用户流量和行为漏斗",
+      "core_concepts": [
+        "商列访问",
+        "商详访问",
+        "咨询点击",
+        "快速购买",
+        "议价",
+        "高意向",
+        "号月付方案点击"
+      ]
+    },
+    {
+      "name": "用户生命周期",
+      "description": "分期业务用户生命周期分层管理",
+      "core_concepts": [
+        "浏览用户",
+        "下单用户",
+        "交易用户",
+        "活跃用户",
+        "沉默用户",
+        "流失用户"
+      ]
+    }
+  ],
+  "业务流程": {
+    "分期业务完整流程": [
+      {
+        "阶段": 1,
+        "名称": "浏览",
+        "描述": "用户在平台上浏览分月付商品",
+        "来源表": "yj_new_dw.dws_gio_event_di / yj_new_dw.dws_track_gio_jyp_customer_product_di",
+        "标识": "is_finance = 1 或浏览过金融商品"
+      },
+      {
+        "阶段": 2,
+        "名称": "下单",
+        "描述": "用户点击下单，产生订单但未完成支付",
+        "来源表": "yj_new_dw.dws_pxb7_trade_order_item_summary_df",
+        "标识": "order_item_status_code NOT IN (4) 或有order_id但未完单"
+      },
+      {
+        "阶段": 3,
+        "名称": "支付",
+        "描述": "用户完成支付",
+        "来源表": "yj_new_dw.dws_pxb7_trade_order_item_summary_df",
+        "标识": "order_item_status_code = 1 或 2"
+      },
+      {
+        "阶段": 4,
+        "名称": "换绑",
+        "描述": "游戏账号换绑操作",
+        "来源表": "yj_new_dw.dwd_pxb7_trade_order_item_df",
+        "标识": "receipt_status_code = 3"
+      },
+      {
+        "阶段": 5,
+        "名称": "完单",
+        "描述": "订单完成，交易成功",
+        "来源表": "yj_new_dw.dws_pxb7_trade_order_item_summary_df",
+        "标识": "order_item_status_code = 4"
+      }
+    ]
+  },
+  "用户分层": {
+    "描述": "分期业务用户生命周期分层，仅针对分期用户",
+    "分层逻辑": [
+      {
+        "层级": 0,
+        "名称": "浏览用户",
+        "定义": "浏览过分期商品的用户",
+        "来源表": "yj_new_dw.dws_track_gio_jyp_customer_product_di / yj_new_dw.dws_gio_event_di",
+        "条件": "浏览过 is_finance = 1 的商品 或 event_key 包含金融商品浏览"
+      },
+      {
+        "层级": "临阶",
+        "名称": "下单未完单用户",
+        "定义": "有过下单行为但没有完成订单的用户",
+        "来源表": "yj_new_dw.dws_pxb7_trade_order_item_summary_df",
+        "条件": "有过 order_id 但 order_item_status_code != 4"
+      },
+      {
+        "层级": 1,
+        "名称": "未交易用户",
+        "定义": "没有产生过完单交易的用户",
+        "来源表": "yj_new_dw.dwd_pxb7_user_user_df",
+        "条件": "不在完成订单表中 或 order_item_status_code != 4"
+      },
+      {
+        "层级": 2,
+        "名称": "新交易用户",
+        "定义": "有过1单完单交易",
+        "来源表": "yj_new_dw.dws_pxb7_trade_order_item_summary_df",
+        "条件": "order_item_status_code = 4 AND order_count = 1"
+      },
+      {
+        "层级": 3,
+        "名称": "复购用户",
+        "定义": "有过2单以上完单交易，且不属于四阶和五阶",
+        "来源表": "yj_new_dw.dws_pxb7_trade_order_item_summary_df",
+        "条件": "order_item_status_code = 4 AND order_count > 2"
+      },
+      {
+        "层级": 4,
+        "名称": "沉默用户",
+        "定义": "有过交易但超过6个月没有交易",
+        "来源表": "yj_new_dw.dws_pxb7_trade_order_item_summary_df",
+        "条件": "order_item_status_code = 4 AND 180天 < 未交易天数 <= 365天"
+      },
+      {
+        "层级": 5,
+        "名称": "流失用户",
+        "定义": "有过交易但超过1年没有交易",
+        "来源表": "yj_new_dw.dws_pxb7_trade_order_item_summary_df",
+        "条件": "order_item_status_code = 4 AND 未交易天数 > 365天"
+      }
+    ],
+    "分期用户标识": {
+      "说明": "仅针对分期(金融)用户，需要通过以下方式筛选",
+      "方式1": {
+        "表": "yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df",
+        "条件": "biz_type = 'finance' AND extend IS NOT NULL AND extend <> ''"
+      },
+      "方式2": {
+        "表": "yj_new_dw.dws_pxb7_trade_order_item_summary_df",
+        "条件": "finance_order_flag_code = 1"
+      },
+      "方式3": {
+        "表": "yj_new_dw.dws_track_gio_jyp_customer_product_di",
+        "条件": "is_finance = 1"
+      }
+    }
+  },
+  "data_tables": [
+    {
+      "name": "yj_new_dw.dwd_pxb7_trade_order_item_df",
+      "description": "交易订单子项表",
+      "key_fields": [
+        "order_item_id",
+        "create_time",
+        "complete_time",
+        "game_name",
+        "finance_order_flag_code",
+        "order_item_status_code",
+        "receipt_status_code"
+      ]
+    },
+    {
+      "name": "yj_new_dw.dws_pxb7_trade_order_item_summary_df",
+      "description": "交易订单子项汇总表",
+      "key_fields": [
+        "order_item_id",
+        "order_time",
+        "buyer_id",
+        "game_name",
+        "finance_order_flag_code",
+        "order_item_status_code",
+        "order_item_actual_pay_amount"
+      ]
+    },
+    {
+      "name": "yj_new_dw.dws_gio_event_di",
+      "description": "用户行为事件表",
+      "key_fields": [
+        "merge_id",
+        "event_key",
+        "page_name",
+        "pit_name",
+        "product_id",
+        "data_source_id",
+        "event_time",
+        "json_attributes",
+        "user_key",
+        "user_id",
+        "anonymous_user"
+      ]
+    },
+    {
+      "name": "yj_new_dw.dws_pxb7_product_info_df",
+      "description": "商品信息表",
+      "key_fields": [
+        "product_id",
+        "product_name",
+        "game_name",
+        "price",
+        "product_status_code",
+        "is_show",
+        "game_id"
+      ]
+    },
+    {
+      "name": "yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df",
+      "description": "商品促销价格快照表(包含分月付商品标识)",
+      "key_fields": [
+        "product_id",
+        "biz_type",
+        "extend"
+      ]
+    },
+    {
+      "name": "yj_new_dw.ods_jyp_finance_finance_order_deposit_df",
+      "description": "金融订单押金表",
+      "key_fields": [
+        "pre_audit_id",
+        "create_time",
+        "deposit_status",
+        "product_deposit_amount",
+        "total_deposit_amount"
+      ]
+    },
+    {
+      "name": "yj_new_dw.ods_jyp_finance_finance_order_pre_audit_df",
+      "description": "金融订单预审表",
+      "key_fields": [
+        "pre_audit_id",
+        "px_order_id",
+        "order_status"
+      ]
+    },
+    {
+      "name": "yj_new_dw.ods_jyp_finance_finance_order_loan_plan_df",
+      "description": "金融订单贷款计划表",
+      "key_fields": [
+        "pre_audit_id",
+        "need_interest_amount",
+        "repay_interest_amount"
+      ]
+    },
+    {
+      "name": "yj_new_dw.ods_jyp_finance_finance_order_loan_df",
+      "description": "金融订单贷款表",
+      "key_fields": [
+        "pre_audit_id",
+        "loan_amount",
+        "loan_status_code"
+      ]
+    },
+    {
+      "name": "yj_new_dw.dwd_pxb7_user_user_df",
+      "description": "用户信息表",
+      "key_fields": [
+        "user_id",
+        "regist_time"
+      ]
+    },
+    {
+      "name": "yj_new_dw.dwd_pxb7_user_user_extend_info_df",
+      "description": "用户扩展信息表",
+      "key_fields": [
+        "user_id",
+        "extra"
+      ]
+    },
+    {
+      "name": "yj_new_dw.dws_pxb7_product_attribute_info_df",
+      "description": "商品属性信息表",
+      "key_fields": [
+        "product_id",
+        "game_name",
+        "attribute_info"
+      ]
+    },
+    {
+      "name": "yj_new_dw.dim_pxb7_game_df",
+      "description": "游戏维度表",
+      "key_fields": [
+        "game_id",
+        "game_name"
+      ]
+    },
+    {
+      "name": "yj_new_dw.dws_pxb7_im_msg_order_product_complement_di",
+      "description": "IM消息订单商品补充表",
+      "key_fields": [
+        "group_id",
+        "sender_user_id",
+        "sender_user_type_code",
+        "product_id",
+        "content",
+        "message_timestamp"
+      ]
+    },
+    {
+      "name": "yj_new_dw.dwd_pxb7_im_group_session_member_df",
+      "description": "IM群会话成员表",
+      "key_fields": [
+        "group_id",
+        "user_id",
+        "user_type_code"
+      ]
+    },
+    {
+      "name": "yj_new_dw.dws_pxb7_user_customercare_info_df",
+      "description": "用户客服信息表",
+      "key_fields": [
+        "user_id",
+        "first_parent_dept_name",
+        "second_parent_dept_name"
+      ]
+    },
+    {
+      "name": "yj_new_dw.dwd_pxb7_im_group_session_extend_df",
+      "description": "IM群会话扩展表",
+      "key_fields": [
+        "group_id",
+        "product_id"
+      ]
+    },
+    {
+      "name": "yj_new_dw.dws_track_gio_jyp_customer_product_di",
+      "description": "金羊皮流量侧漏斗表(包含分期用户标识)",
+      "key_fields": [
+        "date_id",
+        "game_id",
+        "game_name",
+        "new_user_id",
+        "is_finance",
+        "price_type",
+        "account_type",
+        "realname_type",
+        "is_productlist",
+        "is_detail",
+        "is_consult",
+        "is_quickbuy",
+        "is_bargin",
+        "is_high",
+        "is_finance_click",
+        "is_detail_from",
+        "is_consult_from",
+        "is_bargin_from",
+        "is_quickbuy_from",
+        "is_high_from"
+      ]
+    }
+  ],
+  "business_rules": [
+    {
+      "name": "订单状态定义",
+      "rules": [
+        "order_item_status_code = 4: 已成交(完单)",
+        "order_item_status_code NOT IN (4): 未完单(包含下单、支付、换绑等阶段)",
+        "receipt_status_code = 3: 收款成功(换绑完成)"
+      ]
+    },
+    {
+      "name": "时间范围标准",
+      "rules": [
+        "使用TO_CHAR函数格式化时间: TO_CHAR(create_time,'yyyymmdd')",
+        "使用MAX_PT函数获取最新分区: ds = MAX_PT('表名')",
+        "使用date_add(GETDATE(), -1)获取前一天"
+      ]
+    },
+    {
+      "name": "商品属性限制",
+      "rules": [
+        "排除bahei盒子: game_name NOT IN ('bahei盒子')",
+        "排除测试游戏: game_name NOT LIKE '%测试%'",
+        "价格区间: price/100 >= 1000",
+        "商品状态: product_status_code = 1 AND is_show = 1"
+      ]
+    },
+    {
+      "name": "金融订单标识",
+      "rules": [
+        "finance_order_flag_code = 1: 金融订单",
+        "biz_type = 'finance' AND extend IS NOT NULL AND extend <> '': 分月付商品",
+        "is_finance = 1: 流量侧金融用户"
+      ]
+    },
+    {
+      "name": "转化率计算规则",
+      "rules": [
+        "商列到商详率: 商详页浏览人数 / 商品列表曝光人数",
+        "商详到高意向率: 高意向点击人数 / 商详页浏览人数",
+        "高意向下单率: 下单人数 / 高意向点击人数",
+        "下单付款率: 付款人数 / 下单人数",
+        "支付完单率: 完单人数 / 付款人数"
+      ]
+    },
+    {
+      "name": "高意向定义",
+      "rules": [
+        "金融商品: event_key = 'flowClick' AND page_name = '订单确认页面' AND pit_name = '号月付方案'",
+        "非金融商品: event_key = 'productDetailClick' AND pit_name IN ('立即购买','咨询','议价','还价')",
+        "IM消息: content REGEXP '分期|月付'"
+      ]
+    },
+    {
+      "name": "用户标识规则",
+      "rules": [
+        "新用户ID: IF(user_key = '$basic_userId', user_id, anonymous_user)",
+        "是否PX用户: IF(user_key = '$basic_userId', 1, 0)"
+      ]
+    },
+    {
+      "name": "账号类别定义",
+      "rules": [
+        "安卓QQ: lower(attribute_info) REGEXP '安卓qq'",
+        "苹果QQ: lower(attribute_info) REGEXP '苹果qq'",
+        "其他: 不符合以上条件"
+      ]
+    },
+    {
+      "name": "实名类别定义",
+      "rules": [
+        "不可二次实名: attribute_info REGEXP '不可二次实名'",
+        "可二次实名: attribute_info REGEXP '可二次实名'",
+        "支持人脸包赔: attribute_info REGEXP '支持人脸包赔'",
+        "其他: 不符合以上条件"
+      ]
+    },
+    {
+      "name": "价格区间定义",
+      "rules": [
+        "0-500: price / 100 <= 500",
+        "500-1000: price / 100 <= 1000",
+        "1000-1500: price / 100 <= 1500",
+        "1500-2000: price / 100 <= 2000",
+        "2000-2500: price / 100 <= 2500",
+        "2500-3000: price / 100 <= 3000",
+        "3000-3500: price / 100 <= 3500",
+        "3500-4000: price / 100 <= 4000",
+        "4000-4500: price / 100 <= 4500",
+        "4500-5000: price / 100 <= 5000",
+        ">5000: price / 100 > 5000"
+      ]
+    }
+  ],
+  "query_patterns": [
+    {
+      "name": "订单转化漏斗分析",
+      "description": "分析从商品浏览到订单完单的转化过程",
+      "tables": [
+        "yj_new_dw.dws_gio_event_di",
+        "yj_new_dw.dws_pxb7_trade_order_item_summary_df"
+      ],
+      "steps": [
+        "统计商品列表曝光人数",
+        "统计商详页浏览人数",
+        "统计高意向点击人数",
+        "统计下单人数",
+        "统计付款人数",
+        "统计完单人数",
+        "计算各环节转化率"
+      ]
+    },
+    {
+      "name": "金融业务分析",
+      "description": "分析分月付、首付单等金融相关业务",
+      "tables": [
+        "yj_new_dw.ods_jyp_finance_finance_order_deposit_df",
+        "yj_new_dw.ods_jyp_finance_finance_order_pre_audit_df",
+        "yj_new_dw.dwd_pxb7_trade_order_item_df",
+        "yj_new_dw.ods_jyp_finance_finance_order_loan_plan_df",
+        "yj_new_dw.ods_jyp_finance_finance_order_loan_df"
+      ],
+      "steps": [
+        "关联金融订单押金表和预审表",
+        "关联交易订单表获取商品信息",
+        "关联贷款计划表和贷款表获取金融数据",
+        "计算首付金额、利息金额等指标",
+        "分析金融订单的还款结清情况"
+      ]
+    },
+    {
+      "name": "用户行为分析",
+      "description": "分析用户在平台上的行为轨迹",
+      "tables": [
+        "yj_new_dw.dws_gio_event_di",
+        "yj_new_dw.dws_pxb7_product_info_df"
+      ],
+      "steps": [
+        "统计用户浏览、点击等行为事件",
+        "关联商品信息表获取商品属性",
+        "分析用户行为路径和转化情况",
+        "按设备类型、游戏等维度分析"
+      ]
+    },
+    {
+      "name": "商品分析",
+      "description": "分析商品的在架情况和属性",
+      "tables": [
+        "yj_new_dw.dws_pxb7_product_info_df",
+        "yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df",
+        "yj_new_dw.dws_pxb7_product_attribute_info_df"
+      ],
+      "steps": [
+        "统计在架商品数量",
+        "统计分月付商品数量及占比",
+        "分析商品属性分布",
+        "按游戏、价格区间等维度分析"
+      ]
+    },
+    {
+      "name": "流量侧漏斗分析",
+      "description": "分析用户流量和行为漏斗，包括商列访问、商详访问、高意向等环节",
+      "tables": [
+        "yj_new_dw.dws_gio_event_di",
+        "yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df",
+        "yj_new_dw.dws_pxb7_product_info_df",
+        "yj_new_dw.dws_pxb7_product_attribute_info_df",
+        "yj_new_dw.dim_pxb7_game_df",
+        "yj_new_dw.dws_pxb7_im_msg_order_product_complement_di",
+        "yj_new_dw.dwd_pxb7_im_group_session_member_df",
+        "yj_new_dw.dws_pxb7_user_customercare_info_df",
+        "yj_new_dw.dwd_pxb7_im_group_session_extend_df"
+      ],
+      "steps": [
+        "统计用户行为事件（商列访问、商详访问、咨询点击等）",
+        "关联金融商品表识别金融商品",
+        "关联商品信息表获取商品属性（价格区间、账号类别、实名类别）",
+        "从IM消息中提取高意向用户",
+        "按日期、游戏、用户等维度进行分组统计",
+        "构建完整的流量漏斗"
+      ]
+    },
+    {
+      "name": "用户生命周期分析",
+      "description": "分期业务用户生命周期分层分析",
+      "tables": [
+        "yj_new_dw.dwd_pxb7_user_user_df",
+        "yj_new_dw.dws_pxb7_trade_order_item_summary_df",
+        "yj_new_dw.dws_track_gio_jyp_customer_product_di",
+        "yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df"
+      ],
+      "steps": [
+        "筛选分期用户（通过finance_order_flag_code或is_finance或biz_type）",
+        "计算每个用户的订单数量和最后交易时间",
+        "按照分层规则分配用户层级",
+        "统计各层级用户数量和占比"
+      ]
+    }
+  ],
+  "business_scenarios": [
+    {
+      "name": "日报分析",
+      "description": "分析每日的订单转化、金融业务等情况",
+      "time_range": "近7天或近30天",
+      "key_metrics": [
+        "下单数",
+        "付款数",
+        "完单数",
+        "转化率",
+        "金融订单占比"
+      ]
+    },
+    {
+      "name": "周报分析",
+      "description": "分析每周的业务情况，包括商品在架、用户行为等",
+      "time_range": "近一周",
+      "key_metrics": [
+        "商品在架数",
+        "分月付商品占比",
+        "用户活跃度",
+        "转化漏斗",
+        "设备分布"
+      ]
+    },
+    {
+      "name": "金融业务专项分析",
+      "description": "专门分析金融业务的各项指标",
+      "time_range": "自定义",
+      "key_metrics": [
+        "首付单数",
+        "首付金额",
+        "利息收入",
+        "还款结清率",
+        "金融订单转化"
+      ]
+    },
+    {
+      "name": "流量分析",
+      "description": "分析用户流量和行为漏斗，了解用户转化路径",
+      "time_range": "近7天或近30天",
+      "key_metrics": [
+        "商列访问量",
+        "商详访问量",
+        "咨询点击量",
+        "高意向用户数",
+        "号月付方案点击量",
+        "各环节转化率"
+      ]
+    },
+    {
+      "name": "用户生命周期分析",
+      "description": "分析分期业务用户的生命周期分层",
+      "time_range": "自定义",
+      "key_metrics": [
+        "浏览用户数(0阶)",
+        "下单未完单用户数(临阶)",
+        "未交易用户数(1阶)",
+        "新交易用户数(2阶)",
+        "复购用户数(3阶)",
+        "沉默用户数(4阶)",
+        "流失用户数(5阶)",
+        "各层级用户占比"
+      ]
+    }
+  ]
+}

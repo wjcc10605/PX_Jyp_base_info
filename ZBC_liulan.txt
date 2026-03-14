@@ -1,0 +1,350 @@
+
+周步钏
+创新技术研究院-大数据小组
+看下message_type
+有些应该是系统信息
+笑哭[笑哭]这次315把分期功能关了
+突然发现我们实验样本可以变多了。。
+哈哈  你说可以用关了的  做参照么
+对
+等他们重新开启，和关了这段时间比
+这么多  用什么类型
+你看下要的是啥
+感觉要的是文字消息把
+对文字
+message_type_desc
+高意向 是怎么定义的？咨询么 ，code 也给我一个吧
+--odps sql 
+--********************************************************************--
+--author:周步钏
+--create time:2026-01-12 18:20:26
+--********************************************************************--
+
+-- CREATE TABLE IF NOT EXISTS dws_track_gio_jyp_customer_product_di
+-- (
+-- 	date_id STRING COMMENT  '日期',
+-- 	 game_id STRING COMMENT '游戏id',
+-- 	 game_name STRING COMMENT  '游戏名称',
+-- 	 new_user_id STRING COMMENT '新用户id',
+-- 	 is_finance INT COMMENT '是否号月付商品',
+-- 	 price_type STRING COMMENT '商品价格区间',
+-- 	 account_type STRING COMMENT '账号类别(qq、非qq)',
+-- 	 realname_type STRING COMMENT '实名类别',
+-- 	 is_productlist INT COMMENT '是否商列访问',
+-- 	 is_detail INT COMMENT '是否商详访问',
+-- 	 is_consult INT COMMENT '是否咨询点击',
+-- 	 is_quickbuy INT COMMENT '是否快速购买',
+-- 	 is_bargin INT COMMENT '是否议价',
+-- 	 is_high INT COMMENT '是否高意向',
+-- 	 is_finance_click INT COMMENT  '是否分期负方案点击',
+-- 	 is_detail_from INT COMMENT '是否商详(来源商列)',
+--      is_consult_from INT COMMENT '是否咨询(来源商列)',
+--      is_bargin_from INT COMMENT '是否还价(来源商列)',
+-- 	 is_quickbuy_from INT COMMENT '是否快速购买(来源商列)',
+--      is_high_from INT COMMENT '是否高意向(来源商列)'
+-- )
+-- COMMENT '金羊皮流量侧漏斗'
+-- PARTITIONED BY (ds STRING COMMENT '分区')
+-- ;
+
+INSERT OVERWRITE TABLE dws_track_gio_jyp_customer_product_di PARTITION (ds= '${bizdate}')
+
+
+with tmp as 
+(
+select date_id 
+      ,t.game_id
+      ,g.game_name
+      ,new_user_id
+      ,is_finance
+      ,price_type 
+      ,account_type
+      ,realname_type 
+      ,max(product_list) is_productlist
+      ,max(detail) is_detail
+      ,max(consult) is_consult
+      ,max(quickbuy) is_quickbuy
+      ,max(bargin) is_bargin
+      ,max(case when is_finance = 1 then finance_click else  high end ) is_high   
+      ,max(finance_click) is_finance_click
+      ,max(detail_from) is_detail_from 
+      ,max(consult_from) is_consult_from 
+      ,max(bargin_from) is_bargin_from
+      ,max(quickbuy_from) is_quickbuy_from
+      ,max(case when is_finance = 1 then finance_click else  high_from end ) is_high_from
+from 
+(
+
+    select substr(event_time,1,10) date_id 
+            ,coalesce(GET_JSON_OBJECT(t.json_attributes,'$.gameID_var'),d.game_id) game_id
+            ,merge_id
+            ,is_merge_user
+            ,case when c.product_id is not null then 1 else 0 end is_finance
+            ,case when d.price / 100 <=500 then '0-500'
+                    when d.price / 100 <=1000 then '500-1000'
+                    when d.price / 100 <=1500 then '1000-1500'
+                    when d.price / 100 <=2000 then '1500-2000'
+                    when d.price / 100 <=2500 then '2000-2500'
+                    when d.price / 100 <=3000 then '2500-3000'
+                    when d.price / 100 <=3500 then '3000-3500'
+                    when d.price / 100 <=4000 then '3500-4000'
+                    when d.price / 100 <=4500 then '4000-4500'
+                    when d.price / 100 <=5000 then '4500-5000'
+                    when d.price / 100 >5000 then '>5000' end price_type 
+            ,IF(t.user_key = '$basic_userId',t.user_id,t.anonymous_user) AS new_user_id
+            ,IF(t.user_key = '$basic_userId',1,0) AS is_px_user
+            ,e.account_type
+            ,e.realname_type
+            ,case when event_key = 'productOnshow'  and page_name  in  ('商品列表页面','搜索结果页')  then 1 else 0 end product_list
+            ,case when event_key = 'productDetailPageView'   then 1   else 0 end detail  --- 业务说只要浏览事件 不需要点击
+            ,case when event_key = 'productDetailClick'  and pit_name in ('咨询') then 1 else 0 end   consult
+            ,case when event_key = 'productDetailClick'  and pit_name in ('立即购买') then 1 else 0 end   quickbuy
+            ,case when event_key = 'productDetailClick'  and pit_name in ('议价','还价') then 1 else 0 end bargin
+            ,case when event_key = 'productDetailClick'  and pit_name in ('立即购买','咨询','议价','还价') then 1 else 0 end   high
+            ,case when event_key = 'flowClick'  and page_name = '订单确认页面' and pit_name in ('号月付方案') then 1 else 0 end   finance_click
+            ,case when event_key = 'productDetailPageView'  and get_json_object(json_attributes,'$.referrerPageName_var') in ('商品列表页面','搜索结果页')  then 1   else 0 end detail_from  
+            ,case when event_key = 'productDetailClick'  and pit_name in ('咨询') and get_json_object(json_attributes,'$.referrerPageName_var') in ('商品列表页面','搜索结果页') then 1 else 0 end   consult_from
+            ,case when event_key = 'productDetailClick'  and pit_name in ('立即购买') and get_json_object(json_attributes,'$.referrerPageName_var') in ('商品列表页面','搜索结果页') then 1 else 0 end   quickbuy_from
+            ,case when event_key = 'productDetailClick'  and pit_name in ('议价','还价') and get_json_object(json_attributes,'$.referrerPageName_var') in ('商品列表页面','搜索结果页') then 1 else 0 end bargin_from
+            ,case when event_key = 'productDetailClick'  and pit_name in ('立即购买','咨询','议价','还价') and get_json_object(json_attributes,'$.referrerPageName_var') in ('商品列表页面','搜索结果页') then 1 else 0 end   high_from
+            , get_json_object(lower(json_attributes),'$.productid_var') product_id 
+            , t.ds 
+    from dws_gio_event_di t 
+    left join  
+    (
+        SELECT  product_id
+        FROM    ods_pxb7_product_product_promotion_price_snapshot_df 
+        where ds = MAX_PT('ods_pxb7_product_product_promotion_price_snapshot_df')
+        AND biz_type = 'finance'
+        AND extend IS NOT NULL 
+        AND extend<>''
+    ) c on get_json_object(lower(json_attributes),'$.productid_var') = c.product_id
+    left outer join dws_pxb7_product_info_df d on d.ds = MAX_PT('dws_pxb7_product_info_df') and get_json_object(lower(json_attributes),'$.productid_var') = d.product_id 
+    left outer join 
+    (
+        select product_id
+                ,case when lower(attribute_info) REGEXP '安卓qq' then '安卓QQ'
+                      when lower(attribute_info) REGEXP '苹果qq' then '苹果QQ' 
+                      else '其他' end as account_type 
+                ,case when attribute_info REGEXP '不可二次实名' then '不可二次实名'
+                      when attribute_info REGEXP '可二次实名' then '可二次实名'
+                      when attribute_info REGEXP '支持人脸包赔' then '支持人脸包赔' 
+                      else '其他' end as realname_type 
+        from dws_pxb7_product_attribute_info_df 
+        where ds = '${bizdate}'  
+    ) e on get_json_object(lower(json_attributes),'$.productid_var') = e.product_id
+    where t.ds  =  '${bizdate}'
+                            AND     t.event_key NOT IN ('$ma_channel_touch','sellerContractSigned','buyerContractSigned')
+                            AND     NOT (
+                                        t.event_key = 'flowOnshow'
+                                        AND     pit_name = '返回顶部'
+                            ) 
+        and event_key  in ('productOnshow','productDetailPageView','productDetailClick','flowClick')
+
+) t
+left outer join dim_pxb7_game_df g on g.ds = '${bizdate}' and t.game_id = g.game_id
+group by  date_id 
+      ,t.game_id
+      ,g.game_name
+      ,new_user_id
+      ,is_px_user
+      ,is_finance
+      ,price_type 
+      ,account_type
+      ,realname_type 
+having max(product_list) = 1 
+      or max(detail) = 1 
+      or max(consult) = 1 
+      or max(quickbuy) = 1 
+      or max(bargin) = 1 
+      or max(case when is_finance = 1 then finance_click else  high end ) = 1 
+      or max(finance_click) = 1 
+      or max(detail_from) = 1 
+      or max(consult_from) = 1 
+      or max(bargin_from) = 1 
+      or max(quickbuy_from) = 1 
+      or max(case when is_finance = 1 then finance_click else  high_from end ) = 1 
+) ,
+tmp2 as 
+(
+    select  a.date_id
+            ,sender_user_id new_user_id
+            ,case when d.price / 100 <=500 then '0-500'
+                    when d.price / 100 <=1000 then '500-1000'
+                    when d.price / 100 <=1500 then '1000-1500'
+                    when d.price / 100 <=2000 then '1500-2000'
+                    when d.price / 100 <=2500 then '2000-2500'
+                    when d.price / 100 <=3000 then '2500-3000'
+                    when d.price / 100 <=3500 then '3000-3500'
+                    when d.price / 100 <=4000 then '3500-4000'
+                    when d.price / 100 <=4500 then '4000-4500'
+                    when d.price / 100 <=5000 then '4500-5000'
+                    when d.price / 100 >5000 then '>5000' end price_type 
+            ,e.account_type
+            ,e.realname_type
+            ,d.game_id
+            ,d.game_name
+            ,max(high) is_high 
+    from 
+    (
+        select  substr(message_timestamp,1,10) date_id 
+                ,sender_user_id 
+                ,coalesce(a.product_id, c.product_id ) product_id 
+                ,case when content regexp '分期|月付'  then 1 else 0 end high
+        from dws_pxb7_im_msg_order_product_complement_di a 
+        join 
+        (
+            SELECT  group_id
+            FROM    dwd_pxb7_im_group_session_member_df t
+            WHERE   t.ds = MAX_PT('dwd_pxb7_im_group_session_member_df')
+            AND     user_type_code = 1
+            AND     user_id IN 
+            (
+                SELECT  user_id
+                FROM    dws_pxb7_user_customercare_info_df t1
+                WHERE   t1.ds = MAX_PT('dws_pxb7_user_customercare_info_df')
+                AND    
+                (
+                            first_parent_dept_name = '售前交易部'
+                            OR      second_parent_dept_name = '售前交易部'
+                )
+            ) 
+        ) b on a.group_id = b.group_id
+        left outer join dwd_pxb7_im_group_session_extend_df c on c.ds = '${bizdate}' and a.group_id = c.group_id 
+        where a.ds = '${bizdate}' and sender_user_type_code = 2 
+    ) a 
+    join  
+    (
+        SELECT  product_id
+        FROM    ods_pxb7_product_product_promotion_price_snapshot_df 
+        where ds = MAX_PT('ods_pxb7_product_product_promotion_price_snapshot_df')
+        AND biz_type = 'finance'
+        AND extend IS NOT NULL 
+        AND extend<>''
+    ) c on a.product_id = c.product_id
+    left outer join dws_pxb7_product_info_df d on d.ds = '${bizdate}' and a.product_id = d.product_id 
+    left outer join 
+    (
+        select product_id
+                ,case when lower(attribute_info) REGEXP '安卓qq' then '安卓QQ'
+                      when lower(attribute_info) REGEXP '苹果qq' then '苹果QQ' 
+                      else '其他' end as account_type 
+                ,case when attribute_info REGEXP '不可二次实名' then '不可二次实名'
+                      when attribute_info REGEXP '可二次实名' then '可二次实名'
+                      when attribute_info REGEXP '支持人脸包赔' then '支持人脸包赔' 
+                      else '其他' end as realname_type 
+        from dws_pxb7_product_attribute_info_df 
+        where ds = '${bizdate}'  
+    ) e on a.product_id = e.product_id
+
+    group by a.date_id
+            ,sender_user_id 
+            ,case when d.price / 100 <=500 then '0-500'
+                    when d.price / 100 <=1000 then '500-1000'
+                    when d.price / 100 <=1500 then '1000-1500'
+                    when d.price / 100 <=2000 then '1500-2000'
+                    when d.price / 100 <=2500 then '2000-2500'
+                    when d.price / 100 <=3000 then '2500-3000'
+                    when d.price / 100 <=3500 then '3000-3500'
+                    when d.price / 100 <=4000 then '3500-4000'
+                    when d.price / 100 <=4500 then '4000-4500'
+                    when d.price / 100 <=5000 then '4500-5000'
+                    when d.price / 100 >5000 then '>5000' end  
+            ,e.account_type
+            ,e.realname_type
+            ,d.game_id
+            ,d.game_name
+)
+
+
+select date_id 
+      ,game_id 
+      ,game_name
+      ,new_user_id 
+      ,is_finance
+      ,price_type
+      ,account_type
+      ,realname_type
+      ,max(coalesce(is_productlist,0)) s_productlist
+      ,max(coalesce(is_detail,0)) s_detail
+      ,max(coalesce(is_consult,0)) s_consult
+      ,max(coalesce(is_quickbuy,0)) s_quickbuy
+      ,max(coalesce(is_bargin,0)) s_bargin
+      ,max(coalesce(is_high,0)) s_high
+      ,max(coalesce(is_finance_click,0)) s_finance_click
+      ,max(coalesce(is_detail_from,0)) s_detail_from
+      ,max(coalesce(is_consult_from,0)) s_consult_from
+      ,max(coalesce(is_bargin_from,0)) s_bargin_from
+      ,max(coalesce(is_quickbuy_from,0)) s_quickbuy_from
+      ,max(coalesce(is_high_from,0)) s_high_from
+from  
+(
+select date_id 
+      ,game_id
+      ,game_name
+      ,new_user_id
+      ,is_finance
+      ,price_type 
+      ,account_type
+      ,realname_type 
+      , is_productlist
+      , is_detail
+      , is_consult
+      , is_quickbuy
+      , is_bargin
+      , is_high   
+      , is_finance_click
+      , is_detail_from 
+      , is_consult_from 
+      , is_bargin_from
+      , is_quickbuy_from
+      , is_high_from
+from tmp
+
+union all 
+
+
+select date_id 
+      ,game_id
+      ,game_name
+      ,new_user_id
+      ,1 is_finance
+      ,price_type 
+      ,account_type
+      ,realname_type 
+      ,0 is_productlist
+      ,0 is_detail
+      ,0 is_consult
+      ,0 is_quickbuy
+      ,0 is_bargin
+      , is_high   
+      ,0 is_finance_click
+      ,0 is_detail_from 
+      ,0 is_consult_from 
+      ,0 is_bargin_from
+      ,0 is_quickbuy_from
+      ,is_high is_high_from
+from tmp2
+)
+group by date_id 
+      ,game_id 
+      ,game_name
+      ,new_user_id 
+      ,is_finance
+      ,price_type
+      ,account_type
+      ,realname_type
+having       max(coalesce(is_productlist,0)) = 1 
+      or max(coalesce(is_detail,0)) = 1 
+      or max(coalesce(is_consult,0)) = 1 
+      or max(coalesce(is_quickbuy,0)) = 1 
+      or max(coalesce(is_bargin,0)) = 1 
+      or max(coalesce(is_high,0)) = 1 
+      or max(coalesce(is_finance_click,0)) = 1 
+      or max(coalesce(is_detail_from,0)) = 1 
+      or max(coalesce(is_consult_from,0)) = 1 
+      or max(coalesce(is_bargin_from,0)) = 1 
+      or max(coalesce(is_quickbuy_from,0)) = 1 
+      or max(coalesce(is_high_from,0)) = 1
+​​​
+Shift + Enter 换行

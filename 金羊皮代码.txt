@@ -1,0 +1,1388 @@
+--金羊皮正式版订单转化数据
+SELECT  
+a.下单时间 时间,
+a.游戏名称,
+a.分月付下单数,
+a.分月付下单支付数,
+a.分月付下单完单数,
+b.分月付完单数
+
+FROM    (
+            SELECT  UNIX_TIMESTAMP(TO_DATE(create_time)) * 1000 下单时间
+                    -- TO_CHAR(create_time,'yyyymmdd') 下单时间
+                    ,game_name 游戏名称
+                    ,COUNT(DISTINCT order_item_id) 分月付下单数
+                    ,COUNT(DISTINCT CASE    WHEN receipt_status_code = 3 THEN order_item_id END) 分月付下单支付数
+                    ,COUNT(DISTINCT CASE    WHEN order_item_status_code = 4 THEN order_item_id END) 分月付下单完单数
+            FROM    yj_new_dw.dwd_pxb7_trade_order_item_df
+            WHERE   ds = MAX_PT('yj_new_dw.dwd_pxb7_trade_order_item_df')
+            AND     finance_order_flag_code = 1
+            AND     TO_CHAR(create_time,'yyyymmdd') >= '20251219'
+            AND     TO_CHAR(create_time,'yyyymmdd') <= to_char(date_add(GETDATE(), -1),'yyyymmdd')
+            AND     game_name NOT IN ('bahei盒子')
+            GROUP BY 下单时间,游戏名称
+        ) a
+LEFT JOIN   (
+                SELECT  UNIX_TIMESTAMP(TO_DATE(complete_time)) * 1000 完单时间
+                        -- TO_CHAR(complete_time,'yyyymmdd') 完单时间
+                        ,game_name 游戏名称
+                        ,COUNT(DISTINCT CASE    WHEN order_item_status_code = 4 THEN order_item_id END) 分月付完单数
+                FROM    yj_new_dw.dwd_pxb7_trade_order_item_df
+                WHERE   ds = MAX_PT('yj_new_dw.dwd_pxb7_trade_order_item_df')
+                AND     finance_order_flag_code = 1
+                AND     order_item_status_code = 4
+                AND     TO_CHAR(complete_time,'yyyymmdd') >= '20251219'
+                AND     TO_CHAR(complete_time,'yyyymmdd') <= to_char(date_add(GETDATE(), -1),'yyyymmdd')
+                AND     game_name NOT IN ('bahei盒子')
+                GROUP BY 完单时间,游戏名称
+            ) b
+ON      a.下单时间 = b.完单时间
+AND     a.游戏名称 = b.游戏名称
+
+GROUP BY a.下单时间,a.游戏名称,a.分月付下单数,a.分月付下单支付数,a.分月付下单完单数,b.分月付完单数
+;
+
+
+
+
+SELECT  COUNT(DISTINCT merge_id) 商详浏览人数
+FROM    (
+            SELECT  merge_id
+                    ,product_id
+            FROM    yj_new_dw.dws_gio_event_di
+            -- WHERE   ds = MAX_PT('yj_new_dw.dws_gio_event_di')
+            where ds>=20251219
+            AND     event_key = 'productDetailPageView'
+        ) a
+LEFT JOIN   (
+                SELECT  product_id
+                FROM    yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df')
+                AND     biz_type = 'finance'
+                AND     extend IS NOT NULL
+                AND     extend <> ''
+            ) b
+ON      a.product_id = b.product_id
+WHERE   b.product_id IS NOT NULL
+;
+
+
+
+--金融表
+select *
+from yj_new_dw.ods_jyp_finance_finance_order_deposit_df
+where ds=MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_deposit_df')
+and deposit_status=1
+;
+
+
+select 
+COUNT(distinct user_id) 开通服务用户数
+from yj_new_dw.dwd_pxb7_user_user_extend_info_df
+where ds=MAX_PT('yj_new_dw.dwd_pxb7_user_user_extend_info_df')
+and GET_JSON_OBJECT(extra,'$.financeUserTag')=1
+;
+
+
+
+
+SELECT 
+COUNT(distinct px_user_id) 注销用户数
+from
+px_account_maxcompute.dwd_dev_jyp_finance_finance_user_df_temp
+-- where status=1
+;
+
+
+
+--首付单（不包含bahei盒子）
+select 
+-- COUNT(distinct b.px_order_id)
+TO_CHAR(a.create_time,'yyyymmdd') 首付时间,c.game_name 游戏名称,COUNT(distinct b.px_order_id)
+FROM    (
+            SELECT  *
+            FROM    yj_new_dw.ods_jyp_finance_finance_order_deposit_df
+            WHERE   ds = MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_deposit_df')
+            AND     TO_CHAR(create_time,'yyyymmdd') >= '20260123'
+            AND     TO_CHAR(create_time,'yyyymmdd') <= '20260129'
+        ) a
+LEFT JOIN   (
+                SELECT  *
+                FROM    yj_new_dw.ods_jyp_finance_finance_order_pre_audit_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_pre_audit_df')
+            ) b
+ON      a.pre_audit_id = b.pre_audit_id
+left join 
+(
+    select order_item_id,order_item_status_code,game_name
+    from yj_new_dw.dwd_pxb7_trade_order_item_df
+    where ds=MAX_PT('yj_new_dw.dwd_pxb7_trade_order_item_df')
+) c 
+on b.px_order_id=c.order_item_id
+where c.game_name not in ('bahei盒子')
+GROUP BY TO_CHAR(a.create_time,'yyyymmdd'),c.game_name
+;
+
+
+
+--首付单明细数据
+SELECT  
+-- UNIX_TIMESTAMP(TO_DATE(a.create_time)) * 1000 首付时间
+        TO_CHAR(a.create_time,'yyyymmdd') 首付时间
+        ,a.pre_audit_id 预审单单号
+        ,b.px_order_id px订单id
+        ,c.game_name 游戏名称
+        ,c.order_item_actual_pay_amount/100 px订单金额
+        ,c.payout_amount/100 px放款金额
+        ,e.loan_amount 借款金额
+        ,a.product_deposit_amount 商品首付金额
+        ,d.利息金额
+        ,a.indemnity_amount 包赔金额
+        ,a.service_fee_amount 手续费金额
+        ,a.trustee_fee_amount 托管费金额
+        ,a.valuation_fee_amount 估值服务费金额
+        ,a.total_deposit_amount 总首付金额
+        -- ,b.actual_deposit_amount 实际首付金额
+FROM    (
+            SELECT  *
+            FROM    yj_new_dw.ods_jyp_finance_finance_order_deposit_df
+            WHERE   ds = MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_deposit_df')
+            AND     TO_CHAR(create_time,'yyyymmdd') >= '20260123'
+            AND     TO_CHAR(create_time,'yyyymmdd') <= '20260129'
+            -- AND     TO_CHAR(create_time,'yyyymmdd') = to_char(date_add(GETDATE(), -1),'yyyymmdd')
+        ) a
+LEFT JOIN   (
+                SELECT  *
+                FROM    yj_new_dw.ods_jyp_finance_finance_order_pre_audit_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_pre_audit_df')
+            ) b
+ON      a.pre_audit_id = b.pre_audit_id
+LEFT JOIN   (
+                SELECT  order_item_id,order_item_actual_pay_amount,payout_amount,game_name
+                FROM    yj_new_dw.dwd_pxb7_trade_order_item_df
+                WHERE   ds = MAX_PT('yj_new_dw.dwd_pxb7_trade_order_item_df')
+            ) c
+ON      b.px_order_id = c.order_item_id
+LEFT JOIN   (
+                SELECT  pre_audit_id
+                        ,SUM(need_interest_amount) + SUM(repay_interest_amount) 利息金额
+                FROM    yj_new_dw.ods_jyp_finance_finance_order_loan_plan_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_loan_plan_df')
+                GROUP BY pre_audit_id
+            ) d
+ON      a.pre_audit_id = d.pre_audit_id
+left join 
+(
+    select pre_audit_id,loan_amount
+    from yj_new_dw.ods_jyp_finance_finance_order_loan_df
+    where ds=MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_loan_df')
+) e  
+on a.pre_audit_id=e.pre_audit_id
+
+WHERE   b.order_status = 2
+and c.game_name not in ('bahei盒子')
+;
+
+
+
+
+
+
+
+--首付单还款结清数据
+SELECT  COUNT(DISTINCT 
+              CASE    WHEN TO_CHAR(a.create_time,'yyyymmdd') BETWEEN 20251219 AND 20260129 THEN a.pre_audit_id END
+) 全部线上首付单
+        ,COUNT(DISTINCT 
+              CASE    WHEN TO_CHAR(a.create_time,'yyyymmdd') BETWEEN 20251219 AND 20251231 AND d.loan_status_code = 3 THEN a.pre_audit_id END
+        ) 不含本月已结清线上订单
+
+FROM    (
+            SELECT  *
+            FROM    yj_new_dw.dwd_jyp_finance_finance_order_deposit_df
+            WHERE   ds = MAX_PT('yj_new_dw.dwd_jyp_finance_finance_order_deposit_df')
+            AND     deposit_status_code = 1
+        ) a
+LEFT JOIN   (
+                SELECT  *
+                FROM    yj_new_dw.dwd_jyp_finance_finance_order_pre_audit_df
+                WHERE   ds = MAX_PT('yj_new_dw.dwd_jyp_finance_finance_order_pre_audit_df')
+            ) b
+ON      a.pre_audit_id = b.pre_audit_id
+LEFT JOIN   (
+                SELECT  order_item_id
+                        ,order_item_actual_pay_amount
+                        ,payout_amount
+                        ,game_name
+                FROM    yj_new_dw.dwd_pxb7_trade_order_item_df
+                WHERE   ds = MAX_PT('yj_new_dw.dwd_pxb7_trade_order_item_df')
+            ) c
+ON      b.px_order_id = c.order_item_id
+LEFT JOIN   (
+                SELECT  pre_audit_id
+                        ,loan_status_code
+                        ,loan_plan_status_code
+                FROM    yj_new_dw.dwd_jyp_finance_finance_order_loan_df
+                WHERE   ds = MAX_PT('yj_new_dw.dwd_jyp_finance_finance_order_loan_df')
+            ) d
+ON      a.pre_audit_id = d.pre_audit_id
+WHERE   b.order_status_code = 2
+AND     c.game_name NOT IN ('bahei盒子')
+;
+
+
+
+
+
+select game_name,sum(product_list)
+,sum(is_detail_from_list)
+,sum(high)
+,sum(is_order)
+,sum(is_pay)
+,sum(is_complete)
+from 
+(
+
+select t.game_name
+        ,merge_id
+        ,case when event_key = 'productOnshow'  and page_name  in  ('商品列表页面','搜索结果页')  then 1 else 0 end product_list
+        ,case when event_key = 'productDetailPageView'  then 1   else 0 end detail  
+         ,IF(t.event_key = 'productDetailPageView' 
+         AND t.business_type <> '卖家'
+                    AND     GET_JSON_OBJECT(json_attributes,'$.referrerPageName_var') IN ('商品列表页面','搜索结果页'),1,0) AS is_detail_from_list
+        ,case when event_key = 'productDetailClick' AND page_name = '商品详情页面' and pit_name in ('咨询','立即购买','还价') then 1 else 0 end   high
+        ,case when b.buyer_id is not null  then 1 else 0 end is_order
+        ,case when b.buyer_id is not null and order_item_status NOT in('待支付','已取消') then 1 else 0 end is_pay
+        ,case when b.buyer_id is not null and order_item_status_code=4 then 1 else 0 end is_complete
+from yj_new_dw.dws_gio_event_di t 
+left join yj_new_dw.dws_pxb7_product_info_df d on d.product_id = t.product_id and d.ds = 20251228
+left join yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df c on d.product_id = c.product_id and c.ds = 20251228
+left join yj_new_dw.dws_pxb7_trade_order_item_summary_df b on b.ds = 20251228 and t.product_id = b.product_id 
+where t.ds BETWEEN 20251224 AND 20251228
+and d.price/100 >=500
+and t.data_source_id in ('PC','H5')
+AND     t.event_key NOT IN ('$ma_channel_touch','sellerContractSigned','buyerContractSigned')
+AND     NOT (
+            t.event_key = 'flowOnshow'
+            AND     pit_name = '返回顶部'
+) 
+--and b.order_item_status_code = 4
+and b.service_mode_code = 1
+and to_char(b.order_time,'yyyymmdd') between 20251224 and 20251228
+--and c.product_id is not null 
+--AND c.biz_type = 'finance' AND c.extend IS NOT NULL AND c.extend<>''
+AND (biz_type <> 'finance' or extend IS  NULL OR extend='')
+)
+group by game_name
+;
+
+
+
+SELECT  a.*
+        ,b.merchant_name 号商名称
+FROM    (
+            SELECT  unique_no 商品编码
+                    ,product_name 商品名称
+                    ,product_id 商品id
+                    ,game_name 游戏名称
+                    ,seller_user_type 卖家用户类型
+                    ,seller_id
+            FROM    yj_new_dw.dws_pxb7_product_info_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_product_info_df')
+            AND     business_type_code = 4
+            AND     product_status_code = 1
+            AND     is_show = 1
+            AND     seller_user_type = '号商'
+        ) a
+LEFT JOIN   (
+                SELECT  user_id
+                        ,merchant_name
+                FROM    yj_new_dw.dws_pxb7_user_customer_info_df
+                WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_user_customer_info_df')
+            ) b
+ON      a.seller_id = b.user_id
+;
+
+
+--分期完单收入
+SELECT  
+TO_CHAR(order_time,'yyyymmdd') 下单日期
+,a.order_item_id 订单id
+,a.实收金额
+,a.包赔费
+,a.手续费
+-- ,c.indemnity_amount 包赔金额
+-- ,c.service_fee_amount 手续费
+,c.trustee_fee_amount 托管费
+,c.valuation_fee_amount 估值服务费
+,d.利息金额
+,e.loan_amount 借款金额
+
+FROM    (
+            SELECT  order_time
+                    ,order_item_id
+                    ,indemnity_real_amount / 100 包赔费
+                    ,fee_real_amount / 100 手续费
+                    ,order_item_actual_pay_amount/100 实收金额
+            FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+            AND     finance_order_flag_code = 1 -- 金融
+            AND     order_item_status_code = 4 --完单
+            AND     TO_CHAR(order_time,'yyyymmdd') >= '20260101'
+            AND     TO_CHAR(order_time,'yyyymmdd') <= '20260107'
+            AND     game_name NOT IN ('bahei盒子')
+        ) a
+LEFT JOIN   (
+                SELECT  pre_audit_id
+                        ,px_order_id
+                FROM    yj_new_dw.ods_jyp_finance_finance_order_pre_audit_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_pre_audit_df')
+            ) b
+ON      a.order_item_id = b.px_order_id
+LEFT JOIN   (
+                SELECT  pre_audit_id
+                        ,indemnity_amount
+                        ,service_fee_amount
+                        ,trustee_fee_amount
+                        ,valuation_fee_amount
+                FROM    yj_new_dw.ods_jyp_finance_finance_order_deposit_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_deposit_df')
+            ) c
+ON      b.pre_audit_id = c.pre_audit_id
+LEFT JOIN   (
+                SELECT  pre_audit_id
+                        ,SUM(need_interest_amount) + SUM(repay_interest_amount) 利息金额
+                FROM    yj_new_dw.ods_jyp_finance_finance_order_loan_plan_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_loan_plan_df')
+                GROUP BY pre_audit_id
+            ) d
+ON      b.pre_audit_id = d.pre_audit_id
+left join 
+(
+    select pre_audit_id,loan_amount
+    from yj_new_dw.ods_jyp_finance_finance_order_loan_df
+    where ds=MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_loan_df')
+) e  
+on b.pre_audit_id=e.pre_audit_id
+
+
+
+;
+
+--首付单明细数据
+SELECT  UNIX_TIMESTAMP(TO_DATE(a.create_time)) * 1000 首付时间
+        -- TO_CHAR(a.create_time,'yyyymmdd') 首付时间
+        ,a.pre_audit_id 预审单单号
+        ,b.px_order_id px订单id
+        ,c.game_name 游戏名称
+        ,c.order_item_actual_pay_amount/100 px订单金额
+        ,c.payout_amount/100 px放款金额
+        ,e.loan_amount 借款金额
+        ,a.product_deposit_amount 商品首付金额
+        ,d.利息金额
+        ,a.indemnity_amount 包赔金额
+        ,a.service_fee_amount 手续费金额
+        ,a.trustee_fee_amount 托管费金额
+        ,a.valuation_fee_amount 估值服务费金额
+        ,a.total_deposit_amount 总首付金额
+        -- ,b.actual_deposit_amount 实际首付金额
+FROM    (
+            SELECT  *
+            FROM    yj_new_dw.ods_jyp_finance_finance_order_deposit_df
+            WHERE   ds = MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_deposit_df')
+            -- AND     TO_CHAR(create_time,'yyyymmdd') >= '20251219'
+            AND     TO_CHAR(create_time,'yyyymmdd') = to_char(date_add(GETDATE(), -1),'yyyymmdd')
+        ) a
+LEFT JOIN   (
+                SELECT  *
+                FROM    yj_new_dw.ods_jyp_finance_finance_order_pre_audit_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_pre_audit_df')
+            ) b
+ON      a.pre_audit_id = b.pre_audit_id
+LEFT JOIN   (
+                SELECT  order_item_id,order_item_actual_pay_amount,payout_amount,game_name
+                FROM    yj_new_dw.dwd_pxb7_trade_order_item_df
+                WHERE   ds = MAX_PT('yj_new_dw.dwd_pxb7_trade_order_item_df')
+            ) c
+ON      b.px_order_id = c.order_item_id
+LEFT JOIN   (
+                SELECT  pre_audit_id
+                        ,SUM(need_interest_amount) + SUM(repay_interest_amount) 利息金额
+                FROM    yj_new_dw.ods_jyp_finance_finance_order_loan_plan_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_loan_plan_df')
+                GROUP BY pre_audit_id
+            ) d
+ON      a.pre_audit_id = d.pre_audit_id
+left join 
+(
+    select pre_audit_id,loan_amount
+    from yj_new_dw.ods_jyp_finance_finance_order_loan_df
+    where ds=MAX_PT('yj_new_dw.ods_jyp_finance_finance_order_loan_df')
+) e  
+on a.pre_audit_id=e.pre_audit_id
+WHERE   b.order_status = 2
+and c.game_name not in ('bahei盒子')
+;
+
+
+
+
+
+
+
+
+
+
+;
+
+
+
+--分期订单买家设备系统
+SELECT  
+-- to_char(a.order_time,'yyyymmdd') 下单时间
+-- ,b.os 设备系统,b.device_brand 设备品牌
+-- ,b.data_source_id 数据源
+-- ,COUNT(distinct a.order_item_id) 下单数
+-- ,COUNT(distinct a.buyer_id) 下单人数
+-- ,COUNT(distinct case when receipt_status_code=3 then a.order_item_id end) 支付数
+-- ,COUNT(distinct case when receipt_status_code=3 then a.buyer_id end) 支付人数
+-- ,COUNT(distinct case when order_item_status_code = 4 then a.order_item_id end) 完单数
+-- ,COUNT(distinct case when order_item_status_code = 4 then a.buyer_id end) 完单人数
+order_time 下单时间,
+order_item_id 订单id,
+buyer_id 买家id,
+-- b.regist_time 注册时间,
+order_item_status 订单状态
+
+FROM    (
+            SELECT  *
+            FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+            AND     TO_CHAR(order_time,'yyyymmdd') >= '20251219'
+            AND     TO_CHAR(order_time,'yyyymmdd') <= '20260120'
+            AND     game_name NOT IN ('bahei盒子')
+            AND     game_name NOT LIKE '%测试%'
+            AND     finance_order_flag_code = 1
+        )  a 
+left join 
+(
+    SELECT  user_id,regist_time
+    from yj_new_dw.dwd_pxb7_user_user_df
+    where ds=MAX_PT('yj_new_dw.dwd_pxb7_user_user_df')
+) b
+on a.buyer_id = b.user_id
+
+;
+
+
+
+SELECT  distinct os,device_brand,device_type,device_model
+    from yj_new_dw.dws_gio_event_di
+    where ds='20251225'
+;
+
+
+WITH c_fake AS 
+(
+    SELECT  buyer_id
+    FROM    (
+                SELECT  distinct buyer_id
+                FROM    (
+                            SELECT  TO_CHAR(complete_time,'yyyymm') order_month
+                                    ,buyer_id
+                                    ,COUNT(DISTINCT order_item_id) order_cnt
+                            FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+                            WHERE   ds = MAX_PT("yj_new_dw.dws_pxb7_trade_order_item_summary_df")
+                            AND     buyer_id IN (
+                                        SELECT  user_id
+                                        FROM    yj_new_dw.dws_pxb7_user_customer_info_df
+                                        WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_user_customer_info_df')
+                                        AND     user_type_code = 1
+                                    ) 
+                            AND     (
+                                        game_id NOT IN ('124741342486529','140908046049357','144516080484430','146305898545160','146353183047736','147234899812361','149750681444355','151245351608346','168794473390174','169175412097056','171007751970887','179283173867546','184203330224189','183668845174864','186901848621122')
+                                        AND     service_mode_code IN (1)
+                            )
+                            AND     order_item_status_code = 4
+                            AND     TO_CHAR(complete_time,'yyyymmdd') <= TO_CHAR(CURRENT_DATE() - 1,'yyyymmdd')
+                            GROUP BY TO_CHAR(complete_time,'yyyymm')
+                                     ,buyer_id
+                        ) 
+                WHERE   order_cnt > 3
+            ) 
+    GROUP BY buyer_id
+)
+
+SELECT  COUNT(DISTINCT order_item_id)
+        ,COUNT(DISTINCT buyer_Id)
+        ,COUNT(DISTINCT order_item_id) / COUNT(DISTINCT buyer_Id)
+FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+WHERE   ds = MAX_PT("yj_new_dw.dws_pxb7_trade_order_item_summary_df")
+AND     TO_CHAR(complete_time,'yyyymmdd') BETWEEN 20250101 AND 20251231
+AND     order_item_status_code = 4 --AND (product_type_code in ('2','4') or service_mode_code in(1,2))
+AND     service_mode_code IN (1)
+AND     game_id NOT IN ('124741342486529','140908046049357','144516080484430','146305898545160','146353183047736','147234899812361','149750681444355','151245351608346','168794473390174','169175412097056','171007751970887','179283173867546','184203330224189','183668845174864','186901848621122')
+AND     buyer_id NOT IN (
+            SELECT  buyer_id
+            FROM    c_fake
+        ) 
+AND     buyer_id IN (
+            SELECT  buyer_id
+            FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+            WHERE   ds = MAX_PT("yj_new_dw.dws_pxb7_trade_order_item_summary_df")
+            AND     TO_CHAR(order_time,'yyyymmdd') BETWEEN 20250101 AND 20251231
+            AND     order_item_status_code = 4
+            AND     (
+                        product_type_code IN ('2','4')
+                        OR      game_id IN ('124741342486529','140908046049357','144516080484430','146305898545160','146353183047736','147234899812361','149750681444355','151245351608346','168794473390174','169175412097056','171007751970887','179283173867546','184203330224189','183668845174864','186901848621122')
+            )
+        ) 
+;
+
+
+
+
+
+
+-------------------------------------------------------------------------------金羊皮周报
+--分月付商品在架数据
+SELECT  
+game_name 游戏名称,
+COUNT(DISTINCT a.product_id) 在架商品数,
+COUNT(DISTINCT case when b.product_id IS NOT NULL then a.product_id end) 分月付在架商品数,
+COUNT(DISTINCT case when b.product_id IS NOT NULL then a.product_id end)/COUNT(DISTINCT a.product_id) 分月付在架商品数占比
+
+FROM    (
+            SELECT  *
+            FROM    yj_new_dw.dws_pxb7_product_info_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_product_info_df')
+            AND     product_status_code = 1
+            AND     is_show = 1
+        ) a
+LEFT JOIN   (
+                SELECT  product_id
+                FROM    yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df')
+                AND     biz_type = 'finance'
+                AND     extend IS NOT NULL
+                AND     extend <> ''
+            ) b
+ON      a.product_id = b.product_id
+-- WHERE   b.product_id IS NOT NULL
+WHERE game_name in ('和平精英','火影忍者','王者荣耀','穿越火线-枪战王者','英雄联盟手游','金铲铲之战') 
+GROUP BY game_name
+;
+
+
+
+
+--商列商详uv
+select a.ds 日期,
+COUNT(distinct case when event_key = 'productOnshow'  and page_name  in  ('商品列表页面','搜索结果页') then merge_id end) 商列uv,
+COUNT(distinct case when event_key = 'productDetailPageView'  and referrer_page_name in ('商品列表页面','搜索结果页') then merge_id end) 商详uv
+
+from 
+(
+    select ds,event_key,page_name,referrer_page_name,merge_id,product_id
+    from yj_new_dw.dws_gio_event_di
+    where ds>=20260112 and ds<=20260125
+    and event_key in ('productOnshow','productDetailPageView')
+    -- GROUP BY ds
+) a 
+left join  
+(
+    SELECT  product_id
+                FROM    yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df')
+                AND     biz_type = 'finance'
+                AND     extend IS NOT NULL
+                AND     extend <> ''
+) b 
+on a.product_id=b.product_id
+where b.product_id is not null
+
+GROUP BY 日期
+;
+
+
+
+SELECT  
+game_name 游戏名称,
+COUNT(DISTINCT a.product_id) 在架商品数,
+COUNT(DISTINCT case when b.product_id IS NOT NULL then a.product_id end) 分月付在架商品数,
+COUNT(DISTINCT case when b.product_id IS NOT NULL then a.product_id end)/COUNT(DISTINCT a.product_id) 分月付在架商品数占比
+
+FROM    (
+            SELECT  *
+            FROM    yj_new_dw.dws_pxb7_product_info_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_product_info_df')
+            AND     product_status_code = 1
+            AND     is_show = 1
+        ) a
+LEFT JOIN   (
+                SELECT  product_id
+                FROM    yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df')
+                AND     biz_type = 'finance'
+                AND     extend IS NOT NULL
+                AND     extend <> ''
+            ) b
+ON      a.product_id = b.product_id
+-- WHERE   b.product_id IS NOT NULL
+WHERE game_name in ('和平精英','火影忍者','王者荣耀','穿越火线-枪战王者','英雄联盟手游','金铲铲之战') 
+
+
+
+;
+
+
+
+
+-- DROP table tmp_jyp_offical_product ;
+create table tmp_jyp_offical_product as 
+select date_id 
+      ,t.game_id
+      ,g.game_name
+      ,merge_id
+      ,is_merge_user
+      ,new_user_id
+      ,is_px_user
+      ,is_finance
+      ,price_type 
+      ,data_source_id
+      ,max(product_list) is_productlist
+      ,sum(product_list) prodcutlist_pv
+      ,max(detail) is_detail
+      ,sum(detail) detail_pv
+      ,max(fenyue_click) is_fenyue_click
+      ,max(consult) is_consult
+      ,sum(consult) consult_pv
+      ,max(quickbuy) is_quickbuy
+      ,sum(quickbuy) quickbuy_pv
+      ,max(bargin) is_bargin
+      ,sum(bargin) bargin_pv
+      ,max(high) is_high
+      ,sum(high) high_pv
+      ,max(detail_from) is_detail_from 
+      ,max(fenyue_click_from) is_fenyue_click_from
+      ,max(consult_from) is_consult_from
+      ,max(quickbuy_from) is_quickbuy_from
+      ,max(bargin_from) is_bargin_from
+      ,max(high_from) is_high_from
+      ,REGEXP_REPLACE(date_id,'-','') ds 
+      ,product_id
+from 
+(
+
+select substr(event_time,1,10) date_id 
+        ,GET_JSON_OBJECT(t.json_attributes,'$.gameID_var') game_id
+        ,merge_id
+        ,is_merge_user
+        ,case when c.product_id is not null then 1 else 0 end is_finance
+        ,case when d.price / 100 <=500 then '0-500'
+                when d.price / 100 <=1000 then '500-1000'
+                when d.price / 100 <=1500 then '1000-1500'
+                when d.price / 100 <=2000 then '1500-2000'
+                when d.price / 100 <=2500 then '2000-2500'
+                when d.price / 100 <=3000 then '2500-3000'
+                when d.price / 100 <=3500 then '3000-3500'
+                when d.price / 100 <=4000 then '3500-4000'
+                when d.price / 100 <=4500 then '4000-4500'
+                when d.price / 100 <=5000 then '4500-5000'
+                when d.price / 100 >5000 then '>5000' end price_type 
+        ,IF(t.user_key = '$basic_userId',t.user_id,t.anonymous_user) AS new_user_id
+        ,IF(t.user_key = '$basic_userId',1,0) AS is_px_user
+        ,IF(t.event_key IN ('$PAGE','$VISIT') AND NOT (data_source_id = 'Android' AND client_version = '1.0.0' AND is_merge_user = 0),1,0) AS is_active
+        ,data_source_id
+        ,case when event_key = 'productOnshow'  and page_name  in  ('商品列表页面','搜索结果页')  then 1 else 0 end product_list
+        ,case when event_key = 'productDetailPageView'   then 1   else 0 end detail  --- 业务说只要浏览事件 不需要点击
+        ,case when event_key = 'productDetailClick'  and get_json_object(json_attributes,'$.pitName_var') in ('分月付款')  then 1 else 0 end   fenyue_click
+        ,case when event_key = 'productDetailClick'  and get_json_object(json_attributes,'$.pitName_var') in ('咨询') then 1 else 0 end   consult
+        ,case when event_key = 'productDetailClick'  and get_json_object(json_attributes,'$.pitName_var') in ('立即购买') then 1 else 0 end   quickbuy
+        ,case when event_key = 'productDetailClick'  and get_json_object(json_attributes,'$.pitName_var') in ('议价','还价') then 1 else 0 end bargin
+        ,case when event_key = 'productDetailClick'  and get_json_object(json_attributes,'$.pitName_var') in ('立即购买','咨询','议价','还价') then 1 else 0 end   high
+        ,case when event_key = 'productDetailPageView'  and get_json_object(json_attributes,'$.referrerPageName_var') in ('商品列表页面','搜索结果页')  then 1   else 0 end detail_from  
+        ,case when event_key = 'productDetailClick'  and get_json_object(json_attributes,'$.pitName_var') in ('分月付款') and get_json_object(json_attributes,'$.referrerPageName_var') in ('商品列表页面','搜索结果页') then 1 else 0 end   fenyue_click_from
+        ,case when event_key = 'productDetailClick'  and get_json_object(json_attributes,'$.pitName_var') in ('咨询') and get_json_object(json_attributes,'$.referrerPageName_var') in ('商品列表页面','搜索结果页') then 1 else 0 end   consult_from
+        ,case when event_key = 'productDetailClick'  and get_json_object(json_attributes,'$.pitName_var') in ('立即购买') and get_json_object(json_attributes,'$.referrerPageName_var') in ('商品列表页面','搜索结果页') then 1 else 0 end   quickbuy_from
+        ,case when event_key = 'productDetailClick'  and get_json_object(json_attributes,'$.pitName_var') in ('议价','还价') and get_json_object(json_attributes,'$.referrerPageName_var') in ('商品列表页面','搜索结果页') then 1 else 0 end bargin_from
+        ,case when event_key = 'productDetailClick'  and get_json_object(json_attributes,'$.pitName_var') in ('立即购买','咨询','议价','还价') and get_json_object(json_attributes,'$.referrerPageName_var') in ('商品列表页面','搜索结果页') then 1 else 0 end   high_from
+        , get_json_object(json_attributes,'$.productID_var') product_id 
+from yj_new_dw.dws_gio_event_di t 
+left join  
+(
+    SELECT  product_id
+    FROM    yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df 
+    where ds = MAX_PT('yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df')
+    AND biz_type = 'finance'
+    AND extend IS NOT NULL 
+    AND extend<>''
+) c on get_json_object(json_attributes,'$.productID_var') = c.product_id
+left outer join yj_new_dw.dws_pxb7_product_info_df d on d.ds = MAX_PT('yj_new_dw.dws_pxb7_product_info_df') and get_json_object(json_attributes,'$.productID_var') = d.product_id 
+where t.ds BETWEEN 20260123 AND 20260129
+                        AND     t.event_key NOT IN ('$ma_channel_touch','sellerContractSigned','buyerContractSigned')
+                        AND     NOT (
+                                    t.event_key = 'flowOnshow'
+                                    AND     pit_name = '返回顶部'
+                        ) 
+    and event_key  in ('$PAGE','$VISIT','productOnshow','productDetailPageView','productDetailClick')
+
+) t
+left outer join yj_new_dw.dim_pxb7_game_df g on g.ds = '${end_ds}' and t.game_id = g.game_id
+where g.game_name   in ('和平精英','火影忍者','王者荣耀','穿越火线-枪战王者','英雄联盟手游','金铲铲之战') 
+group by date_id ,merge_id,is_merge_user,new_user_id,is_px_user,t.game_id,g.game_name,is_finance,price_type, product_id,data_source_id
+;
+
+
+
+SELECT  date_id -- ,data_source_id ---看业务要不要拆分数据源
+        ,COUNT(DISTINCT CASE    WHEN is_productlist = 1 THEN new_user_id END) 商列uv
+        ,COUNT(DISTINCT CASE    WHEN is_detail = 1 THEN new_user_id END) 商详uv
+        ,COUNT(DISTINCT CASE    WHEN is_consult = 1 THEN new_user_id END) 咨询uv
+        ,COUNT(DISTINCT CASE    WHEN is_quickbuy = 1 THEN new_user_id END) 立即购买uv
+        ,COUNT(DISTINCT CASE    WHEN is_bargin = 1 THEN new_user_id END) 还价uv
+        ,COUNT(DISTINCT CASE    WHEN is_high = 1 THEN new_user_id END) 高意向uv
+        ,COUNT(DISTINCT CASE    WHEN is_fenyue_click = 1 THEN new_user_id END) 号月付页面点击uv
+        ,COUNT(DISTINCT CASE    WHEN is_detail_from = 1 THEN new_user_id END) 商详uv漏斗
+        ,COUNT(DISTINCT CASE    WHEN is_consult_from = 1 THEN new_user_id END) 咨询uv漏斗
+        ,COUNT(DISTINCT CASE    WHEN is_quickbuy_from = 1 THEN new_user_id END) 立即购买uv漏斗
+        ,COUNT(DISTINCT CASE    WHEN is_bargin_from = 1 THEN new_user_id END) 还价uv漏斗
+        ,COUNT(DISTINCT CASE    WHEN is_high_from = 1 THEN new_user_id END) 高意向uv漏斗
+        ,COUNT(DISTINCT CASE    WHEN is_fenyue_click_from = 1 THEN new_user_id END) 号月付页面点击漏斗
+        ,CASE   WHEN is_finance = 1 THEN '号月付'
+                ELSE '非号月付'
+        END type
+FROM    tmp_jyp_offical_product a
+JOIN    (
+            SELECT  product_id
+            FROM    yj_new_dw.dws_pxb7_product_attribute_info_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_product_attribute_info_df')
+            AND     (
+                        (
+                                    game_name IN ('王者荣耀')
+                                    AND     attribute_info REGEXP '安卓QQ|苹果QQ'
+                                    AND     attribute_info REGEXP '可二次实名|支持人脸包赔'
+                                    AND     attribute_info NOT LIKE '%不可二次实名%'
+                                    AND     attribute_info LIKE '%可排位%'
+                                    AND     attribute_info NOT LIKE '%不可排位%'
+                        )
+                        OR      (
+                                    game_name IN ('和平精英','火影忍者')
+                                    AND     attribute_info REGEXP '安卓QQ|苹果QQ'
+                                    AND     attribute_info REGEXP '可二次实名|支持人脸包赔'
+                                    AND     attribute_info NOT LIKE '%不可二次实名%'
+                        )
+                        OR      (
+                                    game_name IN ('穿越火线-枪战王者','金铲铲之战','英雄联盟手游')
+                                    AND     lower(attribute_info) REGEXP '安卓qq|苹果qq'
+                                    AND     attribute_info REGEXP '可二次实名'
+                                    AND     attribute_info NOT LIKE '%不可二次实名%'
+                        )
+            )
+        ) b
+ON      a.product_id = b.product_id
+WHERE   game_name NOT IN ('bahei盒子')
+AND     game_name NOT LIKE '%测试%'
+AND     game_name IN ('王者荣耀','和平精英','火影忍者','穿越火线-枪战王者','金铲铲之战','英雄联盟手游')
+AND     price_type NOT IN ('0-500','500-1000')
+GROUP BY date_id
+         ,type -- ,data_source_id
+;
+
+
+--分月付商品在架数据（限定条件版）
+SELECT  
+game_name 游戏名称,
+COUNT(DISTINCT a.product_id) 在架商品数,
+COUNT(DISTINCT case when a.price/100 >= 1000 then a.product_id end) 不小于1000在架商品数,
+COUNT(DISTINCT case when a.price/100 >= 1000 and b.product_id IS NOT NULL and c.product_id IS NOT NULL then a.product_id end) 分月付在架商品数,
+COUNT(DISTINCT case when a.price/100 >= 1000 and b.product_id IS NULL and c.product_id IS NOT NULL then a.product_id end) 非分月付在架商品数,
+COUNT(DISTINCT case when a.price/100 >= 1000 and b.product_id IS NOT NULL and c.product_id IS NOT NULL then a.product_id end)/COUNT(DISTINCT case when a.price/100 >= 1000 then a.product_id end) 分月付在架商品数占比,
+COUNT(DISTINCT case when a.price/100 >= 1000 and b.product_id IS NULL and c.product_id IS NOT NULL then a.product_id end)/COUNT(DISTINCT case when a.price/100 >= 1000 then a.product_id end) 非分月付在架商品数占比
+
+FROM    (
+            SELECT  *
+            FROM    yj_new_dw.dws_pxb7_product_info_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_product_info_df')
+            AND     product_status_code = 1
+            AND     is_show = 1
+            -- AND     price/100 >= 1000
+        ) a
+LEFT JOIN   (
+                SELECT  product_id
+                FROM    yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df
+                WHERE   ds = MAX_PT('yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df')
+                AND     biz_type = 'finance'
+                AND     extend IS NOT NULL
+                AND     extend <> ''
+
+            ) b
+ON      a.product_id = b.product_id
+left JOIN 
+(
+    SELECT  product_id
+            FROM    yj_new_dw.dws_pxb7_product_attribute_info_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_product_attribute_info_df')
+            AND     (
+                        (
+                                    game_name IN ('王者荣耀')
+                                    AND     attribute_info REGEXP '安卓QQ|苹果QQ'
+                                    AND     attribute_info REGEXP '可二次实名|支持人脸包赔'
+                                    AND     attribute_info NOT LIKE '%不可二次实名%'
+                                    AND     attribute_info LIKE '%可排位%'
+                                    AND     attribute_info NOT LIKE '%不可排位%'
+                        )
+                        OR      (
+                                    game_name IN ('和平精英','火影忍者')
+                                    AND     attribute_info REGEXP '安卓QQ|苹果QQ'
+                                    AND     attribute_info REGEXP '可二次实名|支持人脸包赔'
+                                    AND     attribute_info NOT LIKE '%不可二次实名%'
+                        )
+                        OR      (
+                                    game_name IN ('穿越火线-枪战王者','金铲铲之战','英雄联盟手游')
+                                    AND     lower(attribute_info) REGEXP '安卓qq|苹果qq'
+                                    AND     attribute_info REGEXP '可二次实名'
+                                    AND     attribute_info NOT LIKE '%不可二次实名%'
+                        )
+            )
+) c 
+on a.product_id=c.product_id
+WHERE game_name in ('和平精英','火影忍者','王者荣耀','穿越火线-枪战王者','英雄联盟手游','金铲铲之战') 
+GROUP BY game_name
+;
+
+
+--------------------------订单转化
+SELECT  
+CAST(date(order_time) AS STRING) order_time, 
+        -- game_name,
+        COUNT(DISTINCT buyer_id) 下单用户数
+        ,COUNT(DISTINCT a.order_item_id) 下单数
+        ,COUNT(DISTINCT CASE    WHEN first_receive_time is not null  THEN buyer_id END) 支付用户数
+        ,COUNT(DISTINCT CASE    WHEN first_receive_time is not null THEN a.order_item_id END) 支付订单数
+        ,COUNT(DISTINCT CASE    WHEN end_unlink_time IS NOT NULL THEN buyer_id END) 卖家换绑完成用户数
+        ,COUNT(DISTINCT CASE    WHEN end_unlink_time IS NOT NULL THEN a.order_item_id END) 卖家换绑完成订单数
+        ,COUNT(DISTINCT CASE    WHEN complete_time IS NOT NULL AND order_item_status_code = 4 THEN buyer_id END) 成交用户数
+        ,COUNT(DISTINCT 
+              CASE    WHEN complete_time IS NOT NULL AND order_item_status_code = 4 THEN a.order_item_id END
+        ) 成交订单数
+        ,CASE   WHEN finance_order_flag_code = 1 THEN '号月付'
+                ELSE '非号月付'
+        END 金融类型
+FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df a
+LEFT OUTER JOIN (
+                    -- select order_item_id,buyer_com_end_time,seller_bind_end_time,buyer_bind_end_time
+                    -- from px_customer.ads_zt_delivery_fullchain_df
+                    SELECT  order_item_id
+                            ,end_unlink_time
+                    FROM    yj_new_dw.dws_pxb7_trade_order_ascribe_df
+                    WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_ascribe_df')
+                ) b
+ON      a.order_item_id = b.order_item_id
+WHERE   a.ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+AND     date(order_time) >= '2026-01-12'
+AND     date(order_time) <= '2026-01-25'
+AND     game_name NOT IN ('bahei盒子')
+AND     game_name NOT LIKE '%测试%'
+AND     game_name IN ('王者荣耀','和平精英','火影忍者','穿越火线-枪战王者','金铲铲之战','英雄联盟手游')
+GROUP BY 
+date(order_time),
+金融类型 -- ,game_name
+;
+
+
+
+--每日重复下单数
+SELECT  a.下单时间
+        ,a.买家id
+        ,a.商品编码
+        ,b.order_item_id 订单id
+        ,b.order_item_status 订单状态
+        ,c.receipt_voucher_id 收款单id
+        ,c.channel_name 渠道名称
+        ,c.receipt_status 收款状态
+
+FROM    (
+            SELECT  TO_CHAR(order_time,'yyyymmdd') 下单时间
+                    ,buyer_id 买家id -- ,order_item_id 订单id
+                    ,product_unique_no 商品编码
+                    ,COUNT(order_time) 下单次数 --,concat(TO_CHAR(order_time,'yyyymmdd'),buyer_id,product_unique_no) union_item
+                    -- ,order_item_status 订单状态
+            FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+            AND     game_name NOT IN ('bahei盒子')
+            AND     game_name NOT LIKE '%测试%'
+            AND     finance_order_flag_code = 1
+            AND     TO_CHAR(order_time,'yyyymmdd') = '20260115'
+            GROUP BY TO_CHAR(order_time,'yyyymmdd')
+                     ,buyer_id
+                     ,product_unique_no
+            HAVING  COUNT(order_time) > 1
+        ) a --重复下单买家和商品
+LEFT JOIN   (
+                SELECT  *
+                FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+                WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+                AND     game_name NOT IN ('bahei盒子')
+                AND     game_name NOT LIKE '%测试%'
+                AND     finance_order_flag_code = 1
+            ) b
+ON      a.下单时间 = TO_CHAR(b.order_time,'yyyymmdd')
+AND     a.买家id = b.buyer_id
+AND     a.商品编码 = b.product_unique_no
+left JOIN 
+(
+    select *
+    from yj_new_dw.ads_pxb7_trade_order_create_receipt_detail_df
+    where ds=MAX_PT('yj_new_dw.ads_pxb7_trade_order_create_receipt_detail_df') 
+) c  
+on b.order_item_id = c.order_item_id
+;
+
+
+
+--每日非重复下单数
+SELECT  a.下单时间
+        ,a.买家id
+        ,a.商品编码
+        ,b.order_item_id 订单id
+        ,b.order_item_status 订单状态
+        ,c.receipt_voucher_id 收款单id
+        ,c.channel_name 渠道名称
+        ,c.receipt_status 收款状态
+
+FROM    (
+            SELECT  TO_CHAR(order_time,'yyyymmdd') 下单时间
+                    ,buyer_id 买家id -- ,order_item_id 订单id
+                    ,product_unique_no 商品编码
+                    ,COUNT(order_time) 下单次数 --,concat(TO_CHAR(order_time,'yyyymmdd'),buyer_id,product_unique_no) union_item
+                    -- ,order_item_status 订单状态
+            FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+            AND     game_name NOT IN ('bahei盒子')
+            AND     game_name NOT LIKE '%测试%'
+            AND     finance_order_flag_code = 1
+            AND     TO_CHAR(order_time,'yyyymmdd') = '20260115'
+            GROUP BY TO_CHAR(order_time,'yyyymmdd')
+                     ,buyer_id
+                     ,product_unique_no
+            HAVING  COUNT(order_time) = 1
+        ) a --重复下单买家和商品
+LEFT JOIN   (
+                SELECT  *
+                FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+                WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+                AND     game_name NOT IN ('bahei盒子')
+                AND     game_name NOT LIKE '%测试%'
+                AND     finance_order_flag_code = 1
+            ) b
+ON      a.下单时间 = TO_CHAR(b.order_time,'yyyymmdd')
+AND     a.买家id = b.buyer_id
+AND     a.商品编码 = b.product_unique_no
+left JOIN 
+(
+    select *
+    from yj_new_dw.ads_pxb7_trade_order_create_receipt_detail_df
+    where ds=MAX_PT('yj_new_dw.ads_pxb7_trade_order_create_receipt_detail_df') 
+) c  
+on b.order_item_id = c.order_item_id
+;
+
+
+
+--下单支付黄金链路
+SELECT
+-- a.game_name 游戏名称,
+-- COUNT(distinct a.order_item_id) 下单数,
+COUNT(distinct a.merge_id) 选择号月付用户数,
+COUNT(distinct b.merge_id) 拉起收银台用户数,
+COUNT(distinct c.buyer_id) 支付成功用户数
+
+FROM    
+
+--             SELECT  *
+--             FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+--             WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+--             AND     game_name NOT IN ('bahei盒子')
+--             AND     game_name NOT LIKE '%测试%'
+--             AND     finance_order_flag_code = 1
+--             AND     TO_CHAR(order_time,'yyyymmdd')>='20260123'
+--             AND     TO_CHAR(order_time,'yyyymmdd')<='20260121'
+--         ) a 
+(
+    select COUNT(distinct merge_id)
+    from yj_new_dw.dws_gio_event_di
+    where ds=MAX_PT('yj_new_dw.dws_gio_event_di')
+    and event_key = 'flowClick'
+    and page_name='订单确认页面'
+    and pit_name='号月付方案'
+) a 
+left join 
+(
+    select COUNT(distinct merge_id)
+    from yj_new_dw.dws_gio_event_di
+    where ds=MAX_PT('yj_new_dw.dws_gio_event_di')
+    and event_key = 'paymentCreateOrder'
+) b 
+-- on a.order_item_id = b.order_id
+on a.merge_id=b.merge_id
+left join
+(
+    select *
+    from yj_new_dw.dws_pxb7_trade_order_item_summary_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+            AND     game_name NOT IN ('bahei盒子')
+            AND     game_name NOT LIKE '%测试%'
+            AND     finance_order_flag_code = 1
+            AND     order_item_status_code=4
+) c  
+on b.order_id=c.order_item_id
+
+-- GROUP BY a.game_name
+
+
+;
+
+
+
+SELECT
+-- a.game_name 游戏名称,
+COUNT(distinct a.buyer_id) 下单用户数,
+-- COUNT(distinct b.merge_id) 选择号月付用户数,
+COUNT(distinct b.merge_id) 拉起收银台用户数,
+COUNT(distinct c.buyer_id) 支付成功用户数,
+COUNT(distinct a.order_item_id) 下单数,
+-- COUNT(distinct b.merge_id) 选择号月付用户数,
+COUNT(distinct b.order_id) 拉起收银台数,
+COUNT(distinct c.order_item_id) 支付成功数
+
+FROM    (
+            SELECT  *
+            FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+            AND     game_name NOT IN ('bahei盒子')
+            AND     game_name NOT LIKE '%测试%'
+            AND     finance_order_flag_code = 1
+            AND     TO_CHAR(order_time,'yyyymmdd')>='20260123'
+            AND     TO_CHAR(order_time,'yyyymmdd')='20260129'
+        ) a 
+left join 
+(
+    select *
+    from yj_new_dw.dws_gio_event_di
+    where ds>=20260123
+    and ds<=20260129
+    and event_key = 'paymentCreateOrder'
+) b 
+on a.order_item_id = b.order_id
+and a.buyer_id=b.merge_id
+left join
+(
+    select *
+    from yj_new_dw.dws_pxb7_trade_order_item_summary_df
+            WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+            AND     game_name NOT IN ('bahei盒子')
+            AND     game_name NOT LIKE '%测试%'
+            AND     finance_order_flag_code = 1
+            AND     order_item_status_code=4
+) c  
+on a.order_item_id=c.order_item_id
+
+-- GROUP BY a.game_name
+
+
+;
+
+
+
+
+SELECT  order_item_id,order_item_status,buyer_id
+FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+AND     game_name NOT IN ('bahei盒子')
+AND     game_name NOT LIKE '%测试%'
+AND     finance_order_flag_code = 1
+AND     TO_CHAR(order_time,'yyyymmdd') >= '20260123'
+AND     TO_CHAR(order_time,'yyyymmdd') <= '20260129'
+
+
+;
+
+
+
+
+ ---------------------------------------------------------------------------分月付/非分月付商品商列转化
+WITH t1 AS 
+(
+    SELECT  t.game_name
+            ,merge_id
+            ,product_Id
+            ,data_source_id
+            ,MAX(
+                CASE    WHEN event_key = 'productOnshow' AND page_name IN ('商品列表页面','搜索结果页') THEN 1 ELSE 0 END
+            ) 商品列表浏览
+            ,MAX(CASE    WHEN event_key = 'productDetailPageView' THEN 1 ELSE 0 END) 商详页浏览
+            ,MAX(
+                IF(t.event_key = 'productDetailPageView' AND GET_JSON_OBJECT(json_attributes,'$.referrerPageName_var') IN ('商品列表页面','搜索结果页'),1,0)
+            ) AS 从商列进入详情页
+            ,MAX(
+                CASE    WHEN event_key = 'productDetailClick'
+                            AND page_name = '商品详情页面'
+                            AND pit_name IN ('咨询','立即购买','还价') THEN 1 ELSE 0 END
+            ) 高意向点击
+    FROM    yj_new_dw.dws_gio_event_di t
+    WHERE   t.ds BETWEEN 20260123 AND 20260129
+    AND     user_agent NOT LIKE '%Ubuntu%'
+    AND     t.data_source_id IN ('PC','H5','Android')
+    AND     t.event_key NOT IN ('$ma_channel_touch','sellerContractSigned','buyerContractSigned')
+    AND     NOT (
+                t.event_key = 'flowOnshow'
+                AND     pit_name = '返回顶部'
+    )
+    AND     t.game_name IN ('和平精英','火影忍者','王者荣耀','穿越火线-枪战王者','英雄联盟手游','金铲铲之战')
+    AND     product_id IN (
+                SELECT  product_id
+                FROM    yj_new_dw.dws_pxb7_product_attribute_info_df
+                WHERE   ds BETWEEN 20260123 AND 20260129
+                AND     (
+                            (
+                                        game_name IN ('王者荣耀')
+                                        AND     attribute_info REGEXP '安卓QQ|苹果QQ'
+                                        AND     attribute_info REGEXP '可二次实名|支持人脸包赔'
+                                        AND     attribute_info NOT LIKE '%不可二次实名%'
+                                        AND     attribute_info LIKE '%可排位%'
+                                        AND     attribute_info NOT LIKE '%不可排位%'
+                            )
+                            OR      (
+                                        game_name IN ('和平精英','火影忍者')
+                                        AND     attribute_info REGEXP '安卓QQ|苹果QQ'
+                                        AND     attribute_info REGEXP '可二次实名|支持人脸包赔'
+                                        AND     attribute_info NOT LIKE '%不可二次实名%'
+                            )
+                            OR      (
+                                        game_name IN ('穿越火线-枪战王者','金铲铲之战','英雄联盟手游')
+                                        AND     lower(attribute_info) REGEXP '安卓qq|苹果qq'
+                                        AND     attribute_info REGEXP '可二次实名'
+                                        AND     attribute_info NOT LIKE '%不可二次实名%'
+                            )
+                )
+            ) 
+    AND     product_id IN (
+                SELECT  c.product_id
+                FROM    yj_new_dw.dws_pxb7_product_info_df d
+                LEFT JOIN yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df c
+                ON      d.product_id = c.product_id
+                AND     c.ds BETWEEN 20260123 AND 20260129
+                WHERE   d.ds BETWEEN 20260123 AND 20260129
+                AND     (
+                            biz_type = 'finance'
+                            AND     extend IS NOT NULL
+                            AND     extend <> ''
+                )
+                AND     d.price / 100 >= 650
+            ) 
+    GROUP BY t.game_name
+             ,merge_id
+             ,product_Id
+             ,data_source_id
+)
+,t5 AS 
+(
+    SELECT  buyer_id
+            ,game_name
+            ,product_id 
+            -- ,client_type_code
+            ,MAX(CASE    WHEN order_item_status NOT IN ('待支付','已取消') THEN 1 ELSE 0 END) is_pay
+            ,MAX(CASE    WHEN order_item_status IN ('已成交') THEN 1 ELSE 0 END) is_complete
+    FROM    yj_new_dw.dws_pxb7_trade_order_item_summary_df
+    WHERE   ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+    AND     game_name NOT LIKE '%测试%'
+    AND     game_id NOT IN ('124741342486529','140908046049357','144516080484430','146305898545160','146353183047736','147234899812361','149750681444355','151245351608346','168794473390174','169175412097056','171007751970887','179283173867546','184203330224189','183668845174864','186901848621122')
+    AND     service_mode_code IN (1)
+    AND     TO_CHAR(order_time,'yyyymmdd') BETWEEN 20260123 AND 20260129
+    AND     game_name IN ('和平精英','火影忍者','王者荣耀','穿越火线-枪战王者','英雄联盟手游','金铲铲之战')
+    AND     product_id IN (
+                SELECT  product_id
+                FROM    yj_new_dw.dws_pxb7_product_attribute_info_df
+                WHERE   ds BETWEEN 20260123 AND 20260129
+                AND     (
+                            (
+                                        game_name IN ('王者荣耀')
+                                        AND     attribute_info REGEXP '安卓QQ|苹果QQ'
+                                        AND     attribute_info REGEXP '可二次实名|支持人脸包赔'
+                                        AND     attribute_info NOT LIKE '%不可二次实名%'
+                                        AND     attribute_info LIKE '%可排位%'
+                                        AND     attribute_info NOT LIKE '%不可排位%'
+                            )
+                            OR      (
+                                        game_name IN ('和平精英','火影忍者')
+                                        AND     attribute_info REGEXP '安卓QQ|苹果QQ'
+                                        AND     attribute_info REGEXP '可二次实名|支持人脸包赔'
+                                        AND     attribute_info NOT LIKE '%不可二次实名%'
+                            )
+                            OR      (
+                                        game_name IN ('穿越火线-枪战王者','金铲铲之战','英雄联盟手游')
+                                        AND     lower(attribute_info) REGEXP '安卓qq|苹果qq'
+                                        AND     attribute_info REGEXP '可二次实名'
+                                        AND     attribute_info NOT LIKE '%不可二次实名%'
+                            )
+                )
+            ) 
+    AND     product_id IN (
+                SELECT  c.product_id
+                FROM    yj_new_dw.dws_pxb7_product_info_df d
+                LEFT JOIN yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df c
+                ON      d.product_id = c.product_id
+                AND     c.ds BETWEEN 20260123 AND 20260129
+                WHERE   d.ds BETWEEN 20260123 AND 20260129
+                AND     (
+                            biz_type = 'finance'
+                            AND     extend IS NOT NULL
+                            AND     extend <> ''
+                )
+                AND     d.price / 100 >= 650
+            ) 
+    GROUP BY buyer_id
+             ,game_name
+             ,product_id 
+            --  ,client_type_code
+)
+,user_journey AS 
+(
+    SELECT  t1.game_name
+            ,t1.merge_id
+            ,t1.product_id
+            ,t1.data_source_id
+            ,t1.商品列表浏览
+            ,t1.商详页浏览
+            ,t1.从商列进入详情页
+            ,t1.高意向点击
+            ,CASE   WHEN t5.buyer_id IS NOT NULL THEN 1
+                    ELSE 0
+            END AS is_order
+            ,COALESCE(t5.is_pay,0) AS is_pay
+            ,COALESCE(t5.is_complete,0) AS is_complete
+    FROM    t1
+    LEFT JOIN t5
+    ON      t1.merge_id = t5.buyer_id
+    AND     t1.game_name = t5.game_name
+    AND     t1.product_id = t5.product_id 
+    -- and t1.data_source_id=t5.data_source_id
+)
+
+
+
+SELECT  game_name
+        ,data_source_id
+        ,COUNT(DISTINCT CASE    WHEN 商品列表浏览 = 1 THEN merge_id END) AS 商品列表曝光人数
+        ,COUNT(DISTINCT CASE    WHEN 从商列进入详情页 = 1 THEN merge_id END) AS 从商列进入详情页人数
+        ,COUNT(DISTINCT CASE    WHEN 高意向点击 = 1 THEN merge_id END) AS 高意向点击人数
+        ,COUNT(DISTINCT CASE    WHEN is_order = 1 THEN merge_id END) AS 下单人数
+        ,COUNT(DISTINCT CASE    WHEN is_pay = 1 THEN merge_id END) AS 付款人数
+        ,COUNT(DISTINCT CASE    WHEN is_complete = 1 THEN merge_id END) AS 完单人数
+        ,COUNT(DISTINCT CASE    WHEN 从商列进入详情页 = 1 THEN merge_id END) / NULLIF(COUNT(DISTINCT CASE    WHEN 商品列表浏览 = 1 THEN merge_id END),0) AS 商列到商详率
+        ,COUNT(DISTINCT CASE    WHEN 高意向点击 = 1 THEN merge_id END) / NULLIF(COUNT(DISTINCT CASE    WHEN 从商列进入详情页 = 1 THEN merge_id END),0) AS 商详到高意向率
+        ,COUNT(DISTINCT CASE    WHEN is_order = 1 THEN merge_id END) / NULLIF(COUNT(DISTINCT CASE    WHEN 高意向点击 = 1 THEN merge_id END),0) AS 高意向下单率
+        ,COUNT(DISTINCT CASE    WHEN is_pay = 1 THEN merge_id END) / NULLIF(COUNT(DISTINCT CASE    WHEN is_order = 1 THEN merge_id END),0) AS 下单付款率
+        ,COUNT(DISTINCT CASE    WHEN is_complete = 1 THEN merge_id END) / NULLIF(COUNT(DISTINCT CASE    WHEN is_pay = 1 THEN merge_id END),0) AS 支付完单率
+FROM    user_journey
+GROUP BY game_name
+         ,data_source_id
+;
+
+
+ ---------------------------------------------------------------------------PC端商列转化
+with t1 as(select 
+        merge_id
+        ,max(case when event_key = 'productOnshow'  and page_name  in  ('商品列表页面','搜索结果页')  then 1 else 0 end) 商品列表浏览
+        ,max(case when event_key = 'productDetailPageView'  then 1   else 0 end) 商详页浏览
+         ,max(IF(t.event_key = 'productDetailPageView'
+                    AND     GET_JSON_OBJECT(json_attributes,'$.referrerPageName_var') IN ('商品列表页面','搜索结果页'),1,0)) AS 从商列进入详情页
+        ,max(case when event_key = 'productDetailClick' AND page_name = '商品详情页面' and pit_name in ('咨询','立即购买','还价') then 1 else 0 end)   高意向点击
+from yj_new_dw.dws_gio_event_di t
+where t.ds between 20260123 and 20260129
+and merge_id not in (select merge_id from lili_cramb)
+and user_agent not like '%Ubuntu%'
+and t.data_source_id in ('PC')
+AND     t.event_key NOT IN ('$ma_channel_touch','sellerContractSigned','buyerContractSigned')
+AND     NOT (
+            t.event_key = 'flowOnshow'
+            AND     pit_name = '返回顶部'
+) 
+group by 
+        merge_id
+)
+
+,t5 as(select buyer_id
+,max(case when order_item_status NOT in('待支付','已取消')  then 1 else 0 end) is_pay
+,max(case when order_item_status in('已成交') then 1 else 0 end)  is_complete
+FROM yj_new_dw.dws_pxb7_trade_order_item_summary_df
+WHERE ds=MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')
+and game_name not like '%测试%'
+and game_id  not in('124741342486529'
+,'140908046049357'
+,'144516080484430' 
+,'146305898545160' 
+,'146353183047736'
+,'147234899812361' 
+,'149750681444355' 
+,'151245351608346'
+,'168794473390174'
+,'169175412097056','171007751970887','179283173867546','184203330224189','183668845174864','186901848621122'
+) 
+and service_mode_code in(1)
+and TO_CHAR(order_time,'yyyymmdd')between 20251229 and 20260103
+group by buyer_id
+)
+
+
+,user_journey as(
+SELECT 
+
+        t1.merge_id,
+        t1.商品列表浏览,
+        t1.商详页浏览,
+        t1.从商列进入详情页,
+        t1.高意向点击,
+        CASE WHEN t5.buyer_id IS NOT NULL THEN 1 ELSE 0 END AS is_order,
+        COALESCE(t5.is_pay, 0) AS is_pay,
+        COALESCE(t5.is_complete, 0) AS is_complete
+from t1 left join t5 on t1.merge_id=t5.buyer_id 
+
+
+)
+
+select 
+COUNT(DISTINCT CASE WHEN 商品列表浏览 = 1 THEN merge_id END) AS 商品列表曝光人数,
+    COUNT(DISTINCT CASE WHEN 从商列进入详情页 = 1 THEN merge_id END) AS 从商列进入详情页人数,
+    COUNT(DISTINCT CASE WHEN 高意向点击 = 1 THEN merge_id END) AS 高意向点击人数,
+    COUNT(DISTINCT CASE WHEN is_order = 1 THEN merge_id END) AS 下单人数,
+    COUNT(DISTINCT CASE WHEN is_pay = 1 THEN merge_id END) AS 付款人数,
+    COUNT(DISTINCT CASE WHEN is_complete = 1 THEN merge_id END) AS 完单人数,
+    COUNT(DISTINCT CASE WHEN 从商列进入详情页 = 1 THEN merge_id END) / 
+          NULLIF(COUNT(DISTINCT CASE WHEN 商品列表浏览 = 1 THEN merge_id END), 0)  AS 商列到商详率,
+    COUNT(DISTINCT CASE WHEN 高意向点击 = 1 THEN merge_id END) / 
+          NULLIF(COUNT(DISTINCT CASE WHEN 从商列进入详情页 = 1 THEN merge_id END), 0)  AS 商详到高意向率,
+    COUNT(DISTINCT CASE WHEN is_order = 1 THEN merge_id END) / 
+          NULLIF(COUNT(DISTINCT CASE WHEN 高意向点击 = 1 THEN merge_id END), 0)  AS 高意向下单率,
+    COUNT(DISTINCT CASE WHEN is_pay = 1 THEN merge_id END) / 
+          NULLIF(COUNT(DISTINCT CASE WHEN is_order = 1 THEN merge_id END), 0) AS 下单付款率,
+    COUNT(DISTINCT CASE WHEN is_complete = 1 THEN merge_id END) / 
+          NULLIF(COUNT(DISTINCT CASE WHEN is_pay = 1 THEN merge_id END), 0)  AS 支付完单率
+from user_journey
+;
+
+
+
+--埋点
+select count(1) cnt 
+            ,count(case when get_json_object(lower(json_attributes),'$.productid_var') is null then 1 end )   cnt2 
+    from yj_new_dw.dws_gio_event_di t 
+    where t.ds  =  '20260202'
+        and event_key  in ('flowClick')
+        and page_name = '订单确认页面' and pit_name in ('号月付方案')
+limit 100
+
+
+;
+

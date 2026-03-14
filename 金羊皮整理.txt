@@ -1,0 +1,262 @@
+/*
+==========================================================================
+【数据主题】：金融分期商品流量&交易&在架商品数分析
+【数据范围】：
+  1. 时间范围：2026-02-23 至 2026-03-08
+  2. 游戏范围：已上线分期功能的游戏（排除bahei盒子）
+  3. 业务范围：代售模式、非道充商品的号月付/非号月付场景
+【核心指标】：
+  - 流量层：商列UV/PV、商详UV/PV
+  - 交易层：下单/支付/换绑/成交订单数（分期/非分期）
+  - 商品层：在架商品数、分月付商品占比
+【更新频率】：按日更新
+【关联表说明】：
+  1. dws_gio_event_di：GIO埋点事件明细表（流量数据）
+  2. dws_pxb7_trade_order_item_summary_df：订单明细表（交易数据）
+  3. dws_pxb7_product_info_df：商品信息表（在架商品数据）
+  4. dwd_pxb7_product_finance_rule_df：分期规则配置表（游戏白名单）
+  5. ods_pxb7_product_product_promotion_price_snapshot_df：商品促销价格快照（金融类型标识）
+==========================================================================
+*/
+
+-- 定义通用参数（便于统一维护）
+SET @start_date = '2026-02-23';
+SET @end_date = '2026-03-08';
+SET @finance_rule_ds = '20260304';  -- 分期规则生效日期
+SET @exclude_game = 'bahei盒子';    -- 排除的游戏名称
+
+WITH 
+-- ************************** 1. 流量层：商品列表/详情页UV/PV **************************
+pv_layer AS (
+    SELECT  
+        merge_id AS user_unique_id,  -- 用户唯一标识
+        a.game_name AS game_name,    -- 游戏名称
+        DATE(TO_DATE(event_time)) AS stat_date,  -- 统计日期（标准化命名）
+        -- 金融类型判定：是否为号月付商品
+        CASE 
+            WHEN b.product_id IS NOT NULL THEN '号月付'
+            ELSE '非号月付'
+        END AS finance_type,
+        -- 商品列表页UV（去重用户）
+        COUNT(DISTINCT CASE 
+            WHEN event_key = 'productOnshow' 
+                 AND page_name IN ('商品列表页面','搜索结果页') 
+            THEN merge_id 
+        END) AS product_list_uv,
+        -- 商品详情页UV（来源为商品列表/搜索结果页）
+        COUNT(DISTINCT CASE 
+            WHEN event_key = 'productDetailPageView' 
+                 AND referrer_page_name IN ('商品列表页面','搜索结果页') 
+            THEN merge_id 
+        END) AS product_detail_uv,
+        -- 商品列表页PV（去重事件）
+        COUNT(DISTINCT CASE 
+            WHEN event_key = 'productOnshow' 
+                 AND page_name IN ('商品列表页面','搜索结果页') 
+            THEN event_time 
+        END) AS product_list_pv,
+        -- 商品详情页PV（来源为商品列表/搜索结果页）
+        COUNT(DISTINCT CASE 
+            WHEN event_key = 'productDetailPageView' 
+                 AND referrer_page_name IN ('商品列表页面','搜索结果页') 
+            THEN event_time 
+        END) AS product_detail_pv
+    FROM yj_new_dw.dws_gio_event_di a
+    -- 关联分期游戏白名单
+    INNER JOIN yj_new_dw.dwd_pxb7_product_finance_rule_df f 
+        ON a.game_name = f.game_name
+        AND f.ds = @finance_rule_ds
+        AND f.open_status_code = 1  -- 分期功能已开启
+        AND f.game_name <> @exclude_game
+    -- 关联号月付商品标识
+    LEFT JOIN yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df b 
+        ON a.product_id = b.product_id
+        AND b.ds = '${bizdate}'
+        AND b.biz_type = 'finance'  -- 金融类商品
+        AND b.extend IS NOT NULL
+        AND b.extend <> ''
+    WHERE 
+        a.ds BETWEEN REPLACE(@start_date, '-', '') AND REPLACE(@end_date, '-', '')
+        AND a.event_key IN ('productOnshow','productDetailPageView','flowClick')  -- 核心埋点事件
+        AND b.product_id IS NOT NULL  -- 仅统计金融类商品
+    GROUP BY 
+        user_unique_id,
+        game_name,
+        finance_type,
+        stat_date
+),
+
+-- ************************** 2. 交易层：订单全链路数据 **************************
+trade_layer AS (
+    SELECT  
+        order_id AS order_unique_id,          -- 订单唯一标识
+        buyer_id AS buyer_unique_id,          -- 买家唯一标识
+        a.game_name AS game_name,             -- 游戏名称
+        finance_order_flag_code AS finance_flag,  -- 分期标识（1=分期，非1=非分期）
+        DATE(order_time) AS stat_date,       -- 统计日期
+        COUNT(DISTINCT a.order_item_id) AS total_order_cnt,  -- 总下单数
+        -- 分期订单指标
+        COUNT(DISTINCT CASE WHEN first_receive_time IS NOT NULL THEN a.order_item_id END) AS finance_paid_order_cnt,  -- 分期支付订单数
+        COUNT(DISTINCT CASE WHEN end_unlink_time IS NOT NULL THEN a.order_item_id END) AS finance_unbind_order_cnt,   -- 分期换绑订单数
+        COUNT(DISTINCT CASE WHEN complete_time IS NOT NULL AND order_item_status_code = 4 THEN a.order_item_id END) AS finance_complete_order_cnt,  -- 分期成交订单数
+        -- 非分期订单指标
+        COUNT(DISTINCT CASE WHEN finance_order_flag_code <> 1 THEN a.order_item_id END) AS non_finance_order_cnt,  -- 非分期下单数
+        COUNT(DISTINCT CASE WHEN finance_order_flag_code <> 1 AND first_receive_time IS NOT NULL THEN a.order_item_id END) AS non_finance_paid_order_cnt,  -- 非分期支付订单数
+        COUNT(DISTINCT CASE WHEN finance_order_flag_code <> 1 AND end_unlink_time IS NOT NULL THEN a.order_item_id END) AS non_finance_unbind_order_cnt,   -- 非分期换绑订单数
+        COUNT(DISTINCT CASE WHEN finance_order_flag_code <> 1 AND complete_time IS NOT NULL AND order_item_status_code = 4 THEN a.order_item_id END) AS non_finance_complete_order_cnt  -- 非分期成交订单数
+    FROM yj_new_dw.dws_pxb7_trade_order_item_summary_df a
+    -- 关联分期游戏白名单
+    INNER JOIN yj_new_dw.dwd_pxb7_product_finance_rule_df f 
+        ON a.game_name = f.game_name
+        AND f.ds = @finance_rule_ds
+        AND f.open_status_code = 1
+        AND f.game_name <> @exclude_game
+    -- 关联换绑时间维度
+    LEFT JOIN yj_new_dw.dws_pxb7_trade_order_ascribe_df b 
+        ON a.order_item_id = b.order_item_id
+        AND b.ds = '${bizdate}'
+    WHERE 
+        a.ds = MAX_PT('yj_new_dw.dws_pxb7_trade_order_item_summary_df')  -- 取最新分区
+        AND DATE(order_time) BETWEEN @start_date AND @end_date
+        AND a.service_mode_code = 1  -- 代售模式
+        AND a.product_type_code NOT IN (2,4)  -- 排除道充商品
+    GROUP BY 
+        finance_flag,
+        buyer_unique_id,
+        game_name,
+        order_unique_id,
+        stat_date
+),
+
+-- ************************** 3. 商品层：在架商品数据 **************************
+product_layer AS (
+    SELECT  
+        a.game_name AS game_name,                     -- 游戏名称
+        DATE(TO_DATE(a.ds,'YYYYMMDD')) AS stat_date,  -- 统计日期
+        COUNT(DISTINCT a.product_id) AS total_on_sale_product_cnt,  -- 总在架商品数
+        COUNT(DISTINCT CASE WHEN b.product_id IS NOT NULL THEN a.product_id END) AS finance_on_sale_product_cnt,  -- 分月付在架商品数
+        -- 分月付商品占比（保留4位小数）
+        ROUND(
+            COUNT(DISTINCT CASE WHEN b.product_id IS NOT NULL THEN a.product_id END) / 
+            COUNT(DISTINCT a.product_id), 
+            4
+        ) AS finance_product_ratio
+    FROM yj_new_dw.dws_pxb7_product_info_df a
+    -- 关联分期游戏白名单
+    INNER JOIN yj_new_dw.dwd_pxb7_product_finance_rule_df f 
+        ON a.game_name = f.game_name
+        AND f.ds = @finance_rule_ds
+        AND f.open_status_code = 1
+        AND f.game_name <> @exclude_game
+    -- 关联号月付商品标识
+    LEFT JOIN yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df b 
+        ON a.product_id = b.product_id
+        AND b.ds = MAX_PT('yj_new_dw.ods_pxb7_product_product_promotion_price_snapshot_df')
+        AND b.biz_type = 'finance'
+        AND b.extend IS NOT NULL
+        AND b.extend <> ''
+    WHERE 
+        a.ds >= REPLACE(@start_date, '-', '')
+        AND a.business_type_code NOT IN (2,4)  -- 排除道充商品
+        AND a.product_status_code = 1          -- 商品状态：上架
+        AND a.is_show = 1                      -- 商品可见
+    GROUP BY 
+        game_name,
+        stat_date
+),
+
+-- ************************** 4. 汇总层：流量+交易数据整合 **************************
+summary_layer AS (
+    SELECT  
+        a.stat_date AS stat_date,
+        a.game_name AS game_name,
+        -- 流量指标汇总（按日期+游戏聚合）
+        SUM(COALESCE(a.product_list_uv, 0)) AS product_list_uv,
+        SUM(COALESCE(a.product_detail_uv, 0)) AS product_detail_uv,
+        SUM(COALESCE(a.product_list_pv, 0)) AS product_list_pv,
+        SUM(COALESCE(a.product_detail_pv, 0)) AS product_detail_pv,
+        -- 交易指标汇总
+        SUM(COALESCE(b.total_order_cnt, 0)) AS total_order_cnt,
+        SUM(COALESCE(b.finance_order_cnt, 0)) AS finance_order_cnt,
+        SUM(COALESCE(b.finance_paid_order_cnt, 0)) AS finance_paid_order_cnt,
+        SUM(COALESCE(b.finance_unbind_order_cnt, 0)) AS finance_unbind_order_cnt,
+        SUM(COALESCE(b.finance_complete_order_cnt, 0)) AS finance_complete_order_cnt,
+        SUM(COALESCE(b.non_finance_order_cnt, 0)) AS non_finance_order_cnt,
+        SUM(COALESCE(b.non_finance_paid_order_cnt, 0)) AS non_finance_paid_order_cnt,
+        SUM(COALESCE(b.non_finance_unbind_order_cnt, 0)) AS non_finance_unbind_order_cnt,
+        SUM(COALESCE(b.non_finance_complete_order_cnt, 0)) AS non_finance_complete_order_cnt
+    FROM (
+        -- 流量数据按用户+日期+游戏聚合
+        SELECT  
+            stat_date,
+            game_name,
+            user_unique_id,
+            SUM(product_list_uv) AS product_list_uv,
+            SUM(product_detail_uv) AS product_detail_uv,
+            SUM(product_list_pv) AS product_list_pv,
+            SUM(product_detail_pv) AS product_detail_pv
+        FROM pv_layer
+        GROUP BY stat_date, game_name, user_unique_id
+    ) a
+    -- 关联交易数据（用户+日期+游戏维度）
+    LEFT JOIN (
+        -- 交易数据按买家+日期+游戏聚合
+        SELECT  
+            stat_date,
+            game_name,
+            buyer_unique_id,
+            SUM(total_order_cnt) AS total_order_cnt,
+            SUM(CASE WHEN finance_flag = 1 THEN total_order_cnt ELSE 0 END) AS finance_order_cnt,
+            SUM(finance_paid_order_cnt) AS finance_paid_order_cnt,
+            SUM(finance_unbind_order_cnt) AS finance_unbind_order_cnt,
+            SUM(finance_complete_order_cnt) AS finance_complete_order_cnt,
+            SUM(non_finance_order_cnt) AS non_finance_order_cnt,
+            SUM(non_finance_paid_order_cnt) AS non_finance_paid_order_cnt,
+            SUM(non_finance_unbind_order_cnt) AS non_finance_unbind_order_cnt,
+            SUM(non_finance_complete_order_cnt) AS non_finance_complete_order_cnt
+        FROM trade_layer
+        GROUP BY stat_date, game_name, buyer_unique_id
+    ) b
+        ON a.user_unique_id = b.buyer_unique_id
+        AND a.game_name = b.game_name
+        AND a.stat_date = b.stat_date
+    GROUP BY a.stat_date, a.game_name
+)
+
+-- ************************** 最终输出：全维度整合结果 **************************
+SELECT  
+    -- 上线批次维度（便于业务分层分析）
+    CASE 
+        WHEN a.game_name IN ('王者荣耀','和平精英','火影忍者','穿越火线-枪战王者','金铲铲之战','英雄联盟手游') THEN '1期_2512'
+        WHEN a.game_name IN ('部落冲突','使命召唤手游') THEN '2期_2603'
+        ELSE '其他'
+    END AS online_batch,
+    a.stat_date AS 统计日期,
+    a.game_name AS 游戏名称,
+    -- 流量指标
+    a.product_list_uv AS 商品列表UV,
+    a.product_detail_uv AS 商品详情UV,
+    a.product_list_pv AS 商品列表PV,
+    a.product_detail_pv AS 商品详情PV,
+    -- 交易指标
+    a.total_order_cnt AS 总下单数,
+    a.finance_order_cnt AS 分期下单数,
+    a.finance_paid_order_cnt AS 分期支付订单数,
+    a.finance_unbind_order_cnt AS 分期换绑订单数,
+    a.finance_complete_order_cnt AS 分期成交订单数,
+    a.non_finance_order_cnt AS 非分期下单数,
+    a.non_finance_paid_order_cnt AS 非分期支付订单数,
+    a.non_finance_unbind_order_cnt AS 非分期换绑订单数,
+    a.non_finance_complete_order_cnt AS 非分期成交订单数,
+    -- 商品指标
+    b.finance_on_sale_product_cnt AS 分月付在架商品数,
+    b.total_on_sale_product_cnt AS 总在架商品数,
+    b.finance_product_ratio AS 分月付商品占比
+FROM summary_layer a
+-- 关联在架商品数据
+LEFT JOIN product_layer b 
+    ON a.game_name = b.game_name
+    AND a.stat_date = b.stat_date
+ORDER BY 
+    a.stat_date DESC,
+    a.game_name ASC;

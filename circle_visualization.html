@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>金羊皮项目 - Circle数据可视化</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .chart-container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .chart-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #555;
+        }
+        .chart {
+            width: 100%;
+            height: 400px;
+        }
+        .circle-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 8px;
+        }
+        .circle-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .circle-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+        }
+        .circle-name {
+            font-size: 14px;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>金羊皮项目 - Circle数据可视化</h1>
+        
+        <!-- Circle图例 -->
+        <div class="circle-legend">
+            <div class="circle-item">
+                <div class="circle-color" style="background-color: #5470c6;"></div>
+                <div class="circle-name">号月付</div>
+            </div>
+            <div class="circle-item">
+                <div class="circle-color" style="background-color: #91cc75;"></div>
+                <div class="circle-name">非号月付</div>
+            </div>
+            <div class="circle-item">
+                <div class="circle-color" style="background-color: #fac858;"></div>
+                <div class="circle-name">PC端</div>
+            </div>
+            <div class="circle-item">
+                <div class="circle-color" style="background-color: #ee6666;"></div>
+                <div class="circle-name">H5端</div>
+            </div>
+            <div class="circle-item">
+                <div class="circle-color" style="background-color: #73c0de;"></div>
+                <div class="circle-name">Android端</div>
+            </div>
+        </div>
+        
+        <!-- 订单转化漏斗图 -->
+        <div class="chart-container">
+            <div class="chart-title">订单转化漏斗</div>
+            <div id="funnelChart" class="chart"></div>
+        </div>
+        
+        <!-- 游戏分布饼图 -->
+        <div class="chart-container">
+            <div class="chart-title">游戏分布</div>
+            <div id="gamePieChart" class="chart"></div>
+        </div>
+        
+        <!-- 转化趋势图 -->
+        <div class="chart-container">
+            <div class="chart-title">转化趋势</div>
+            <div id="trendChart" class="chart"></div>
+        </div>
+        
+        <!-- 设备分布 -->
+        <div class="chart-container">
+            <div class="chart-title">设备分布</div>
+            <div id="deviceChart" class="chart"></div>
+        </div>
+    </div>
+    
+    <script>
+        // 初始化ECharts实例
+        const funnelChart = echarts.init(document.getElementById('funnelChart'));
+        const gamePieChart = echarts.init(document.getElementById('gamePieChart'));
+        const trendChart = echarts.init(document.getElementById('trendChart'));
+        const deviceChart = echarts.init(document.getElementById('deviceChart'));
+        
+        // 漏斗图数据
+        const funnelOption = {
+            tooltip: {
+                trigger: 'item',
+                formatter: '{a} <br/>{b}: {c} ({d}%)'
+            },
+            legend: {
+                data: ['商品列表曝光', '商详页浏览', '高意向点击', '下单', '付款', '完单'],
+                bottom: 0
+            },
+            series: [
+                {
+                    name: '转化漏斗',
+                    type: 'funnel',
+                    left: '10%',
+                    top: 60,
+                    bottom: 60,
+                    width: '80%',
+                    min: 0,
+                    max: 10000,
+                    minSize: '0%',
+                    maxSize: '100%',
+                    sort: 'descending',
+                    gap: 2,
+                    label: {
+                        show: true,
+                        position: 'inside'
+                    },
+                    labelLine: {
+                        length: 10,
+                        lineStyle: {
+                            width: 1,
+                            type: 'solid'
+                        }
+                    },
+                    itemStyle: {
+                        borderColor: '#fff',
+                        borderWidth: 1
+                    },
+                    emphasis: {
+                        label: {
+                            fontSize: 20
+                        }
+                    },
+                    data: [
+                        { value: 10000, name: '商品列表曝光', itemStyle: { color: '#5470c6' } },
+                        { value: 6000, name: '商详页浏览', itemStyle: { color: '#91cc75' } },
+                        { value: 3000, name: '高意向点击', itemStyle: { color: '#fac858' } },
+                        { value: 1500, name: '下单', itemStyle: { color: '#ee6666' } },
+                        { value: 1200, name: '付款', itemStyle: { color: '#73c0de' } },
+                        { value: 1000, name: '完单', itemStyle: { color: '#3ba272' } }
+                    ]
+                }
+            ]
+        };
+        
+        // 游戏分布饼图
+        const gamePieOption = {
+            tooltip: {
+                trigger: 'item',
+                formatter: '{a} <br/>{b}: {c} ({d}%)'
+            },
+            legend: {
+                orient: 'vertical',
+                left: 'left',
+                data: ['和平精英', '火影忍者', '王者荣耀', '穿越火线-枪战王者', '英雄联盟手游', '金铲铲之战']
+            },
+            series: [
+                {
+                    name: '游戏分布',
+                    type: 'pie',
+                    radius: '50%',
+                    center: ['60%', '50%'],
+                    data: [
+                        { value: 30, name: '和平精英', itemStyle: { color: '#5470c6' } },
+                        { value: 20, name: '火影忍者', itemStyle: { color: '#91cc75' } },
+                        { value: 25, name: '王者荣耀', itemStyle: { color: '#fac858' } },
+                        { value: 10, name: '穿越火线-枪战王者', itemStyle: { color: '#ee6666' } },
+                        { value: 8, name: '英雄联盟手游', itemStyle: { color: '#73c0de' } },
+                        { value: 7, name: '金铲铲之战', itemStyle: { color: '#3ba272' } }
+                    ],
+                    emphasis: {
+                        itemStyle: {
+                            shadowBlur: 10,
+                            shadowOffsetX: 0,
+                            shadowColor: 'rgba(0, 0, 0, 0.5)'
+                        }
+                    }
+                }
+            ]
+        };
+        
+        // 转化趋势图
+        const trendOption = {
+            tooltip: {
+                trigger: 'axis'
+            },
+            legend: {
+                data: ['号月付', '非号月付'],
+                bottom: 0
+            },
+            xAxis: {
+                type: 'category',
+                data: ['1月23日', '1月24日', '1月25日', '1月26日', '1月27日', '1月28日', '1月29日']
+            },
+            yAxis: {
+                type: 'value'
+            },
+            series: [
+                {
+                    name: '号月付',
+                    type: 'line',
+                    data: [120, 132, 101, 134, 90, 230, 210],
+                    itemStyle: { color: '#5470c6' },
+                    lineStyle: { width: 3 }
+                },
+                {
+                    name: '非号月付',
+                    type: 'line',
+                    data: [220, 182, 191, 234, 290, 330, 310],
+                    itemStyle: { color: '#91cc75' },
+                    lineStyle: { width: 3 }
+                }
+            ]
+        };
+        
+        // 设备分布图
+        const deviceOption = {
+            tooltip: {
+                trigger: 'item',
+                formatter: '{a} <br/>{b}: {c} ({d}%)'
+            },
+            legend: {
+                orient: 'vertical',
+                left: 'left',
+                data: ['PC端', 'H5端', 'Android端']
+            },
+            series: [
+                {
+                    name: '设备分布',
+                    type: 'pie',
+                    radius: ['40%', '70%'],
+                    center: ['60%', '50%'],
+                    avoidLabelOverlap: false,
+                    itemStyle: {
+                        borderRadius: 10,
+                        borderColor: '#fff',
+                        borderWidth: 2
+                    },
+                    label: {
+                        show: false,
+                        position: 'center'
+                    },
+                    emphasis: {
+                        label: {
+                            show: true,
+                            fontSize: 20,
+                            fontWeight: 'bold'
+                        }
+                    },
+                    labelLine: {
+                        show: false
+                    },
+                    data: [
+                        { value: 40, name: 'PC端', itemStyle: { color: '#fac858' } },
+                        { value: 35, name: 'H5端', itemStyle: { color: '#ee6666' } },
+                        { value: 25, name: 'Android端', itemStyle: { color: '#73c0de' } }
+                    ]
+                }
+            ]
+        };
+        
+        // 应用配置
+        funnelChart.setOption(funnelOption);
+        gamePieChart.setOption(gamePieOption);
+        trendChart.setOption(trendOption);
+        deviceChart.setOption(deviceOption);
+        
+        // 响应式处理
+        window.addEventListener('resize', function() {
+            funnelChart.resize();
+            gamePieChart.resize();
+            trendChart.resize();
+            deviceChart.resize();
+        });
+    </script>
+</body>
+</html>
